@@ -16,6 +16,8 @@
 
 */
 
+#include <stdlib.h>
+
 class IFile
 {
 public:

@@ -8,11 +8,11 @@
 #include "targetver.h"
 
 #include <stdio.h>
-#include <tchar.h>
+//#include <tchar.h>
 
 
 template <typename T>
-__forceinline void OffsetPtr(T*& ptr, int offsetBytes)
+inline void OffsetPtr(T*& ptr, int offsetBytes)
 {
 	ptr = (T*) ((const char*)ptr + offsetBytes);
 }
