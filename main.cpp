@@ -18,16 +18,16 @@
 #include "ReadImage/ReadImage.h"
 #include "ReadImage/File.h"
 
-int _tmain(int argc, _TCHAR* argv[])
+int main(int argc, char* argv[])
 {
 	if (argc < 2) {
-		_tprintf(_T("specify filename\n"));
+		printf("specify filename\n");
 		return 1;
 	}
 	
-	FILE* f = _tfopen(argv[1], _T("rb"));
+	FILE* f = fopen(argv[1], "rb");
 	if (!f) {
-		_tprintf(_T("failed to open file : %s\n"), argv[1]);
+		printf("failed to open file : %s\n", argv[1]);
 		return 1;
 	}
 	File fo(f);
@@ -82,6 +82,6 @@ int _tmain(int argc, _TCHAR* argv[])
 	//fwrite(pOutput, 1, size, of);
 	//fclose(of);
 
-	_tprintf(_T("%f%% %d bytes"), (100.0 * compressedLen) / size, compressedLen);
+	printf("%f%% %zu bytes", (100.0 * compressedLen) / size, compressedLen);
 	return 0;
 }

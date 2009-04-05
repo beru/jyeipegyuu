@@ -2,15 +2,12 @@
 
 #include "IFile.h"
 
-#include <windows.h>
 #include <stdio.h>
 
 class File : public IFile
 {
 public:
-	File(HANDLE hFile);
-
-	File(FILE* pFile);
+	File(FILE* file);
 
 	bool Read(void* pBuffer, size_t nNumberOfBytesToRead, size_t& nNumberOfBytesRead);
 	
@@ -28,6 +25,6 @@ public:
 	virtual const void* GetBuffer() const { return 0; }
 	
 private:
-	HANDLE hFile_;
+	FILE* file_;
 };
 

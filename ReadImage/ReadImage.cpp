@@ -4,8 +4,38 @@
 
 #define TRACE printf
 #include <assert.h>
+#include <stdio.h>
 
-#include <windows.h>
+//#include <windows.h>
+
+#define BI_BITFIELDS 3
+
+typedef unsigned short WORD;
+typedef unsigned int DWORD;
+typedef long LONG;
+
+typedef struct tagBITMAPINFOHEADER {
+    DWORD  biSize;
+    LONG   biWidth;
+    LONG   biHeight;
+    WORD   biPlanes;
+    WORD   biBitCount;
+    DWORD  biCompression;
+    DWORD  biSizeImage;
+    LONG   biXPelsPerMeter;
+    LONG   biYPelsPerMeter;
+    DWORD  biClrUsed;
+    DWORD  biClrImportant;
+} BITMAPINFOHEADER;
+
+typedef struct tagBITMAPFILEHEADER {
+  WORD  bfType;
+  DWORD bfSize;         /* DWORD (４バイト) 境界にアラインされていない点に注意．*/
+  WORD  bfReserved1;
+  WORD  bfReserved2;
+  DWORD bfOffBits;      /* DWORD (４バイト) 境界にアラインされていない点に注意．*/
+} BITMAPFILEHEADER;
+
 
 bool Read_BITMAPINFOHEADER(IFile& file, BITMAPINFOHEADER& bmih)
 {
@@ -47,7 +77,7 @@ bool ReadImageInfo_BMP(IFile& file, ImageInfo& info)
 
 bool ReadImageData_BMP(IFile& file, unsigned char* dest, int lineOffset, void* palettes)
 {
-	file.Seek(0, FILE_BEGIN);
+	file.Seek(0, SEEK_SET);
 	BITMAPINFOHEADER bmih;
 	if (!Read_BITMAPINFOHEADER(file, bmih)) {
 		return false;

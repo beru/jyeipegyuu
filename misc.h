@@ -1,4 +1,6 @@
 
+#include <string.h>
+
 template <typename T>
 void gather(
 	const T* in, int lineOffsetBytes,
@@ -140,7 +142,7 @@ private:
 };
 
 enum RiceCoderFlag {
-	None = 0xFF,
+	RiceCoderFlag_None = 0xFF,
 };
 
 size_t compressSub(
@@ -221,7 +223,7 @@ size_t compressSub(
 	size_t len = 0;
 	if (initialCompressedLen < compressedLen && initialCompressedLen < bytesLen) {
 		*dest++ = 1;
-		*dest++ = RiceCoderFlag::None;
+		*dest++ = RiceCoderFlag_None;
 		len = initialCompressedLen;
 		memcpy(dest+4, tmp, len);
 	}else if (compressedLen < bytesLen) {
@@ -480,7 +482,7 @@ size_t decompressSub(ICompressor& compressor, const unsigned char* src, unsigned
 		len2 = len;
 	}
 	
-	if (b == RiceCoderFlag::None) {
+	if (b == RiceCoderFlag_None) {
 		memcpy(dest, tmp, len2);
 		for (size_t i=0; i<len2/4; ++i) {
 			int val = dest[i];
