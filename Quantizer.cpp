@@ -1,11 +1,14 @@
 #include "stdafx.h"
 #include "Quantizer.h"
 
-static const int quant8_scan[16] = {
-	0,3,4,3, 3,1,5,1, 4,5,2,5, 3,1,5,1
+static const int QUANT8_SCAN[16] = {
+	0,3,4,3,
+	3,1,5,1,
+	4,5,2,5,
+	3,1,5,1
 };
 
-static const int dequant8_scale[6][6] = {
+static const int DEQUANT8_SCALE[6][6] = {
 	{ 20, 18, 32, 19, 25, 24 },
 	{ 22, 19, 35, 21, 28, 26 },
 	{ 26, 23, 42, 24, 33, 31 },
@@ -13,7 +16,7 @@ static const int dequant8_scale[6][6] = {
 	{ 32, 28, 51, 30, 40, 38 },
 	{ 36, 32, 58, 34, 46, 43 },
 };
-static const int quant8_scale[6][6] = {
+static const int QUANT8_SCALE[6][6] = {
 	{ 13107, 11428, 20972, 12222, 16777, 15481 },
 	{ 11916, 10826, 19174, 11058, 14980, 14290 },
 	{ 10082,  8943, 15978,  9675, 12710, 11985 },
@@ -22,8 +25,8 @@ static const int quant8_scale[6][6] = {
 	{  7282,  6428, 11570,  6830,  9118,  8640 }
 };
 
-static const unsigned char quant8_intra_matrix[8][8] = {
-	6,	10,	13,	16,	18,	23,	25,	27,
+static const unsigned char QUANT8_INTRA_MATRIX[8][8] = {
+		6,	10,	13,	16,	18,	23,	25,	27,
 	10,	11,	16,	18,	23,	25,	27,	29,
 	13,	16,	18,	23,	25,	27,	29,	31,
 	16,	18,	23,	25,	27,	29,	31,	33,
@@ -31,17 +34,6 @@ static const unsigned char quant8_intra_matrix[8][8] = {
 	23,	25,	27,	29,	31,	33,	36,	38,
 	25,	27,	29,	31,	33,	36,	38,	40,
 	27,	29,	31,	33,	36,	38,	40,	42,
-};
-
-static const unsigned char quant8_inter_matrix[8][8] = {
-	9,	13,	15,	17,	19,	21,	22,	24,
-	13,	13,	17,	19,	21,	22,	24,	25,
-	15,	17,	19,	21,	22,	24,	25,	27,
-	17,	19,	21,	22,	24,	25,	27,	28,
-	19,	21,	22,	24,	25,	27,	28,	30,
-	21,	22,	24,	25,	27,	28,	30,	32,
-	22,	24,	25,	27,	28,	30,	32,	33,
-	24,	25,	27,	28,	30,	32,	33,	35,
 };
 
 namespace {
@@ -60,13 +52,13 @@ void Quantizer::init(size_t qp, size_t hBlockness, size_t vBlockness, bool useQu
 	QP_remain = QP % 6;
 	
 	for (size_t i=0; i<64; ++i) {
-		int j = quant8_scan[((i>>1)&12) | (i&3)];
+		int j = QUANT8_SCAN[((i>>1)&12) | (i&3)];
 //		printf("%d,", j);
-		quant8_table[i] = quant8_scale[QP_remain][j];
-		dequant8_table[i] = dequant8_scale[QP_remain][j] << QP_shift;
+		quant8_table[i] = QUANT8_SCALE[QP_remain][j];
+		dequant8_table[i] = DEQUANT8_SCALE[QP_remain][j] << QP_shift;
 	}
 	
-	// é‡å­åŒ–ãƒ†ãƒ¼ãƒ–ãƒ«æ“ä½œ
+	// —ÊŽq‰»ƒe[ƒuƒ‹‘€ì
 	for (size_t i=0; i<8; ++i) {
 		if (i>=(8-hBlockness)) {
 			for (size_t j=0; j<8; ++j) {
@@ -80,12 +72,12 @@ void Quantizer::init(size_t qp, size_t hBlockness, size_t vBlockness, bool useQu
 		}
 	}
 	
-	// é«˜å‘¨æ³¢ã‚’è’ãã™ã‚‹é‡å­åŒ–ãƒžãƒˆãƒªã‚¯ã‚¹ã‚’é©ç”¨
+	// ‚Žü”g‚ðr‚­‚·‚é—ÊŽq‰»ƒ}ƒgƒŠƒNƒX‚ð“K—p
 	if (useQuantMatrix) {
 		for (size_t i=0; i<8; ++i) {
 			for (size_t j=0; j<8; ++j) {
-				quant8_table[i*8+j] = div(quant8_table[i*8+j] << 4, quant8_intra_matrix[i][j]);
-				dequant8_table[i*8+j] *= quant8_intra_matrix[i][j];
+				quant8_table[i*8+j] = div(quant8_table[i*8+j] << 4, QUANT8_INTRA_MATRIX[i][j]);
+				dequant8_table[i*8+j] *= QUANT8_INTRA_MATRIX[i][j];
 			}
 		}
 	}else {

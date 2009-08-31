@@ -10,7 +10,10 @@
 #include <cmath>
 
 #include <boost/integer_traits.hpp>
-#include "BZip2Compressor.h"
+using namespace boost;
+#include <boost/cstdint.hpp>
+
+#include "Compressor/BZip2Compressor.h"
 #include "misc.h"
 #include "decode.h"
 #include "encode.h"
@@ -18,16 +21,16 @@
 #include "ReadImage/ReadImage.h"
 #include "ReadImage/File.h"
 
-int main(int argc, char* argv[])
+int _tmain(int argc, _TCHAR* argv[])
 {
 	if (argc < 2) {
-		printf("specify filename\n");
+		_tprintf(_T("specify filename\n"));
 		return 1;
 	}
 	
-	FILE* f = fopen(argv[1], "rb");
+	FILE* f = _tfopen(argv[1], _T("rb"));
 	if (!f) {
-		printf("failed to open file : %s\n", argv[1]);
+		_tprintf(_T("failed to open file : %s\n"), argv[1]);
 		return 1;
 	}
 	File fo(f);
@@ -52,13 +55,35 @@ int main(int argc, char* argv[])
 	}
 	
 	Quantizer quantizer;
-	quantizer.init(6*8+0, 0, 0, true);
+	quantizer.init(6*8+1, 0, 0, false);
 	
 	const size_t hBlockCount = width / 8 + ((width % 8) ? 1 : 0);
 	const size_t vBlockCount = height / 8 + ((height % 8) ? 1 : 0);
 	const size_t totalBlockCount = hBlockCount * vBlockCount;
 	
 	encode(quantizer, hBlockCount, vBlockCount, &in[0], width, &work[0], width*sizeof(int));
+
+	if (0) {	
+		int cutoff_table[8][8] = {
+			-1,-1,-1,-1,-1,-1, 1, 1,
+			-1,-1,-1,-1,-1,-1, 1, 1,
+			-1,-1,-1,-1,-1,-1, 1, 1,
+			-1,-1,-1,-1,-1,-1, 1, 1,
+			-1,-1,-1,-1,-1,-1, 1, 1,
+			-1,-1,-1,-1,-1,-1, 1, 1,
+			 1, 1, 1, 1, 1, 1, 1, 1,
+			 1, 1, 1, 1, 1, 1, 1, 1,	
+		};
+		for (size_t i=0; i<8; ++i) {
+			for (size_t j=0; j<8; ++j) {
+				if (cutoff_table[i][j] < 0) {
+					cutoff_table[i][j] = boost::integer_traits<int>::const_max;
+				}
+			}
+		}
+		cutoff(hBlockCount, vBlockCount, &work[0], width*sizeof(int), cutoff_table);
+	}
+	
 	int* pWork = &work[0];
 	
 	BZip2Compressor compressor;
@@ -66,8 +91,9 @@ int main(int argc, char* argv[])
 	
 	size_t storageSize = work.size()*4*1.1+600;
 	std::vector<unsigned char> work3(storageSize);
+	std::vector<unsigned char> work4(storageSize);
 	std::vector<unsigned char> compressed(storageSize);
-	compressedLen = compress(compressor, hBlockCount, vBlockCount, &work[0], &work2[0], &work3[0], work3.size(), &compressed[0], compressed.size());
+	compressedLen = compress(compressor, hBlockCount, vBlockCount, &work[0], &work2[0], &work3[0], &work4[0], &compressed[0], compressed.size());
 	
 	std::fill(work.begin(), work.end(), 0);
 	std::fill(work2.begin(), work2.end(), 0);
@@ -82,6 +108,6 @@ int main(int argc, char* argv[])
 	//fwrite(pOutput, 1, size, of);
 	//fclose(of);
 
-	printf("%f%% %zu bytes", (100.0 * compressedLen) / size, compressedLen);
+	_tprintf(_T("%f%% %d bytes"), (100.0 * compressedLen) / size, compressedLen);
 	return 0;
 }

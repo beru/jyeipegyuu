@@ -1,52 +1,60 @@
 #include "stdafx.h"
 #include "File.h"
 
-//#include <io.h>
+#include <io.h>
 #include <assert.h>
 #include <memory.h>
 #include <stdio.h>
 
-File::File(FILE* file)
+#include <windows.h>
+
+File::File(HANDLE hFile)
+	:
+	hFile_(hFile)
 {
-	file_ = file;
+}
+
+File::File(FILE* pFile)
+{
+	hFile_ = (HANDLE) _get_osfhandle(_fileno(pFile));
 }
 
 bool File::Read(void* pBuffer, size_t nNumberOfBytesToRead, size_t& nNumberOfBytesRead)
 {
-	nNumberOfBytesRead = fread(pBuffer, 1, nNumberOfBytesToRead, file_);
-	return nNumberOfBytesRead;
+	return ReadFile(hFile_, pBuffer, nNumberOfBytesToRead, (LPDWORD)&nNumberOfBytesRead, NULL);
 }
 
 bool File::Write(const void* pBuffer, size_t nNumberOfBytesToWrite, size_t& nNumberOfBytesWritten)
 {
-	nNumberOfBytesWritten = fwrite(pBuffer, 1, nNumberOfBytesToWrite, file_);
-	return nNumberOfBytesWritten;
+	return WriteFile(hFile_, pBuffer, nNumberOfBytesToWrite, (LPDWORD)&nNumberOfBytesWritten, NULL);
 }
 
 size_t File::Seek(long lDistanceToMove, size_t dwMoveMethod)
 {
-	return fseek(file_, lDistanceToMove, dwMoveMethod);
+	return SetFilePointer(hFile_, lDistanceToMove, NULL, dwMoveMethod);
 }
 
 size_t File::Tell() const
 {
-	return ftell(file_);
+	/*
+		-- Reference --
+		http://nukz.net/reference/fileio/hh/winbase/filesio_3vhu.htm
+	*/
+	return SetFilePointer(
+		hFile_, // must have GENERIC_READ and/or GENERIC_WRITE 
+		0,     // do not move pointer 
+		NULL,  // hFile is not large enough to need this pointer 
+		FILE_CURRENT
+	);  // provides offset from current position 
 }
 
 size_t File::Size() const
 {
-	fpos_t pos;
-	fgetpos( file_, &pos );
-	fseek( file_, 0, SEEK_END );
-	long pos2 = ftell(file_);
-//	fgetpos( file_, &pos2 );
-	fsetpos( file_, &pos );
-	return pos2;
-//	return GetFileSize(hFile_, NULL);
+	return GetFileSize(hFile_, NULL);
 }
 
 bool File::Flush()
 {
-	fflush(file_);
+	return FlushFileBuffers(hFile_);
 }
 
