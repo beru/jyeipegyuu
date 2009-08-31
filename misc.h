@@ -1,6 +1,4 @@
 
-#include <string.h>
-
 template <typename T>
 void gather(
 	const T* in, int lineOffsetBytes,
@@ -31,6 +29,33 @@ void scatter(
 	}
 }
 
+void cutoff(
+	size_t hBlockCount, size_t vBlockCount,
+	int* data, int lineOffsetBytes,
+	const int table[8][8]
+	)
+{
+
+	int* srcLine = data;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int* workSrcLine = srcLine;
+		for (size_t yi=0; yi<8; ++yi) {
+			int* pWork = workSrcLine;
+			const int* tableLine = table[yi];
+			for (size_t x=0; x<hBlockCount; ++x) {
+				for (size_t xi=0; xi<8; ++xi) {
+					int value = *pWork;
+					int newValue = std::min(tableLine[xi], std::abs(value));
+					*pWork = (value < 0) ? -newValue : newValue;
+					++pWork;
+				}
+			}
+			OffsetPtr(workSrcLine, lineOffsetBytes);
+		}
+		OffsetPtr(srcLine, lineOffsetBytes * 8);
+	}
+}
+
 int paethPredictor(int left, int above, int upperLeft)
 {
 	int initial = left + (above - upperLeft);
@@ -53,6 +78,7 @@ public:
 		:
 		nBits_(0),
 		dest_(dest),
+		initialDest_(dest),
 		counter_(0)
 	{
 		*dest_ = 0;
@@ -70,10 +96,12 @@ public:
 		++nBits_;
 	}
 	size_t nBits() const { return nBits_; }
+	size_t nBytes() const { return (dest_ - initialDest_) + (counter_ ? 1 : 0); }
 private:
 	size_t nBits_;
 	unsigned char counter_;
 	unsigned char* dest_;
+	unsigned char* initialDest_;
 };
 
 class BitReader
@@ -82,6 +110,7 @@ public:
 	BitReader(const unsigned char* src)
 		:
 		src_(src),
+		initialSrc_(src),
 		counter_(0)
 	{
 	}
@@ -96,9 +125,13 @@ public:
 		}
 		return ret;
 	}
+	
+	size_t nBytes() const { return src_ - initialSrc_; }
+	
 private:
 	unsigned char counter_;
 	const unsigned char* src_;
+	const unsigned char* initialSrc_;
 };
 
 class RiceCoder
@@ -142,47 +175,103 @@ private:
 };
 
 enum RiceCoderFlag {
-	RiceCoderFlag_None = 0xFF,
+	None = 0xF,
 };
+
+size_t repeationCompress(
+	const unsigned char* src, size_t srcLen,
+	unsigned char* tmp
+	)
+{
+	int repeatHist[1024] = {0};
+	int repeat = 0;
+
+	BitWriter bitWriter(tmp);
+	RiceCoder riceCoder(2);
+	
+	for (size_t i=0; i<srcLen; ++i) {
+		unsigned char d = src[i];
+		for (size_t j=0; j<8; ++j) {
+			if (d & (1 << (7-j))) {
+				++repeat;
+			}else {
+				riceCoder.Encode(repeat, bitWriter);
+				++repeatHist[repeat];
+				repeat = 0;
+			}
+		}
+	}
+	if (repeat) {
+		riceCoder.Encode(repeat, bitWriter);
+		++repeatHist[repeat];
+		repeat = 0;			
+	}
+	
+	size_t len = bitWriter.nBytes();
+	return len;
+}
+
+size_t repeationDecompress(
+	const unsigned char* src, size_t srcLen,
+	unsigned char* dst
+	)
+{
+	RiceCoder riceCoder(2);
+	BitReader bitReader(src);
+	BitWriter bitWriter(dst);
+	while (bitReader.nBytes() <= srcLen) {
+		size_t v = riceCoder.Decode(bitReader);
+		for (size_t i=0; i<v; ++i) {
+			bitWriter.putBit(true);
+		}
+		bitWriter.putBit(false);
+	}
+	return bitWriter.nBytes();
+}
 
 size_t compressSub(
 	ICompressor& compressor,
 	int* src, size_t srcLen,
 	unsigned char* dest, size_t destLen,
-	unsigned char* tmp, size_t tmpLen
+	unsigned char* tmp,
+	unsigned char* tmp2
 	)
 {
 	unsigned char* initialDest = dest;
 	
 	assert(destLen > 4);
-
+	
 	int mini = boost::integer_traits<int>::const_max;
 	int maxi = boost::integer_traits<int>::const_min;
-//	int table[4096] = {0};
-
+	
+	int hists[1024] = {0};
 	BitWriter signFlags(dest+4);
 	for (size_t i=0; i<srcLen; ++i) {
 		int val = src[i];
+		mini = std::min(val, mini);
+		maxi = std::max(val, maxi);
 		if (val == 0) {
+			;
 		}else if (val < 0) {
 			signFlags.putBit(false);
 		}else {
 			signFlags.putBit(true);
 		}
 		val = std::abs(val);
-		maxi = std::max(val, maxi);
 		src[i] = val;
-//		++table[val];
+		
+		++hists[val];
 	}
-	size_t signFlagCount = signFlags.nBits();
-	size_t signFlagBytes = signFlagCount/8 + ((signFlagCount%8) ? 1 : 0);
+	
+	uint32_t signFlagBytes = signFlags.nBytes();
 	*((size_t*)dest) = signFlagBytes;
+	
 	dest += (4 + signFlagBytes);
 	destLen -= (4 + signFlagBytes);
 	
-	mini = 0;
+	int b = 0;
 	size_t max = std::max(maxi, std::abs(mini));
-	int b;
+	
 	if (max > 2048) {
 		b = 7;
 	}else if (max > 1024) {
@@ -201,48 +290,53 @@ size_t compressSub(
 		b = 0;
 	}
 	
-	size_t initialCompressedLen = compressor.Compress((const unsigned char*)src, srcLen*4, tmp, tmpLen);
+	size_t initialCompressedLen = compressor.Compress((const unsigned char*)src, srcLen*4, tmp, -1);
 	
-	BitWriter bitWriter(dest);
+	BitWriter bitWriter(tmp2);
 	RiceCoder riceCoder(b);
 	for (size_t i=0; i<srcLen; ++i) {
 		riceCoder.Encode(src[i], bitWriter);
 	}
-	//BitReader bitReader(dest);
-	//for (size_t i=0; i<srcLen; ++i) {
-	//	size_t val = riceCoder.Decode(bitReader);
-	//	assert(src[i] == val);
-	//}
-	size_t bitsLen = bitWriter.nBits();
-	size_t bytesLen = bitsLen / 8;
-	if (bitsLen % 8) ++bytesLen;
+	size_t bytesLen = bitWriter.nBytes();
+	
+	size_t compressedLen = 0;
 
-	memcpy(src, dest, bytesLen);
-	size_t compressedLen = compressor.Compress((const unsigned char*)src, bytesLen, dest+2+4, destLen-2-4);
+	compressedLen = compressor.Compress(tmp2, bytesLen, dest+6, -1);
+	unsigned char* dest2 = (compressedLen < initialCompressedLen) ? tmp : (dest+6);
+	size_t repeationCompressedLen = repeationCompress(tmp2, bytesLen, dest2);
 	
 	size_t len = 0;
-	if (initialCompressedLen < compressedLen && initialCompressedLen < bytesLen) {
+	if (initialCompressedLen < compressedLen && initialCompressedLen < bytesLen && initialCompressedLen < repeationCompressedLen) {
 		*dest++ = 1;
-		*dest++ = RiceCoderFlag_None;
+		*dest++ = RiceCoderFlag::None;
 		len = initialCompressedLen;
 		memcpy(dest+4, tmp, len);
-	}else if (compressedLen < bytesLen) {
+	}else if (compressedLen < bytesLen && compressedLen < repeationCompressedLen) {
 		*dest++ = 1;
 		*dest++ = b;
 		len = compressedLen;
-	}else {
+	}else if (bytesLen < repeationCompressedLen) {
 		*dest++ = 0;
 		*dest++ = b;
 		len = bytesLen;
-		memcpy(dest+4, src, len);
+		memcpy(dest+4, tmp2, len);
+	}else {
+		*dest++ = 2;
+		*dest++ = b;
+		len = repeationCompressedLen;
+		memcpy(dest+4, dest2, len);
 	}
 	*((size_t*)dest) = len;
 	dest += 4;
 	dest += len;
-
-//	printf("%d %d %d\n", max, b, len + signFlagBytes);
-
-	return dest - initialDest;
+	
+	size_t destDiff = dest - initialDest;
+	printf(
+		"[%d %d %d %d %d] %d %d %d\n",
+		hists[0], hists[1], hists[2], hists[3], hists[4],
+		max, b, destDiff);
+	
+	return destDiff;
 }
 
 size_t compress(
@@ -251,7 +345,8 @@ size_t compress(
 	size_t vBlockCount,
 	const int* src,
 	int* tmp,
-	unsigned char* tmp2, size_t tmp2Len,
+	unsigned char* tmp2,
+	unsigned char* tmp3,
 	unsigned char* dest, size_t destLen
 	)
 {
@@ -310,7 +405,7 @@ size_t compress(
 	}
 
 	size_t progress = 0;
-	progress += compressSub(compressor, tmp, totalBlockCount, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 
 	// AC1
@@ -325,7 +420,7 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*3, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*3, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 
 	// AC2
@@ -342,7 +437,7 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*5, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*5, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 
 	// AC3
@@ -361,7 +456,7 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*7, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*7, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 	
 	// AC4
@@ -382,7 +477,7 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*9, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*9, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 	
 	// AC5
@@ -405,7 +500,7 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*11, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*11, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 	
 	// AC6
@@ -430,7 +525,7 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*13, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*13, dest+progress, destLen-progress, tmp2, tmp3);
 	to = tmp;
 	
 	// AC7
@@ -457,32 +552,40 @@ size_t compress(
 		}
 		readPos += fromWidth8;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*15, dest+progress, destLen-progress, tmp2, tmp2Len);
+	progress += compressSub(compressor, tmp, totalBlockCount*15, dest+progress, destLen-progress, tmp2, tmp3);
 	
 	return progress;
 }
 
 size_t decompressSub(ICompressor& compressor, const unsigned char* src, unsigned char* tmp, int* dest, size_t destLen)
 {
+	const unsigned char* initialSrc = src;
+	
 	size_t signFlagBytes = *(size_t*)src;
 	src += 4;
 	BitReader signFlags(src);
 	src += signFlagBytes;
-
-	bool isCompressed = *src++ != 0;
+	
+	unsigned char compressFlag = *src++;
 	unsigned char b = *src++;
 	size_t len = *(size_t*)src;
 	src += 4;
 	
 	size_t len2 = 0;
-	if (isCompressed) {
-		len2 = compressor.Decompress(src, len, tmp, destLen*4);
-	}else {
+	switch (compressFlag) {
+	case 0:
 		memcpy(tmp, src, len);
 		len2 = len;
+		break;
+	case 1:
+		len2 = compressor.Decompress(src, len, tmp, -1);
+		break;
+	case 2:
+		len2 = repeationDecompress(src, len, tmp);
+		break;
 	}
-	
-	if (b == RiceCoderFlag_None) {
+		
+	if (b == RiceCoderFlag::None) {
 		memcpy(dest, tmp, len2);
 		for (size_t i=0; i<len2/4; ++i) {
 			int val = dest[i];
@@ -507,8 +610,8 @@ size_t decompressSub(ICompressor& compressor, const unsigned char* src, unsigned
 		}
 	}
 //	showMinus(dest, dest, destLen);
-	
-	return 4 + signFlagBytes + 6 + len;
+		
+	return 4 + signFlagBytes + + 6 + len;
 }
 
 void decompress(

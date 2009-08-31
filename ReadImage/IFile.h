@@ -2,21 +2,19 @@
 
 /*!
 
-概要
-	画像の入出力用に仮想的にFileを扱えるようにする
+�T�v
+	�摜�̓��o�͗p�ɉ��z�I��File��������悤�ɂ���
 	
-制限
-	非同期操作には対応しない
-	2GBまで
+����
+	�񓯊�����ɂ͑Ή����Ȃ�
+	2GB�܂�
 	
-備考
-	CxImage by Davide Pizzolato (http://www.xdp.it/cximage.htm)	を参考にしました。
+���l
+	CxImage by Davide Pizzolato (http://www.xdp.it/cximage.htm)	���Q�l�ɂ��܂����B
 
-	InterfaceをWindowsAPIのFile関数に似せています
+	Interface��WindowsAPI��File�֐��Ɏ����Ă��܂�
 
 */
-
-#include <stdlib.h>
 
 class IFile
 {
