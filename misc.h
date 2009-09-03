@@ -126,7 +126,7 @@ public:
 		return ret;
 	}
 	
-	size_t nBytes() const { return src_ - initialSrc_; }
+	size_t nBytes() const { return (src_ - initialSrc_) + (counter_ ? 1 : 0); }
 	
 private:
 	unsigned char counter_;
@@ -174,16 +174,85 @@ private:
 	size_t shift_;
 };
 
+class ModifiedUnaryCoder
+{
+public:
+	ModifiedUnaryCoder(size_t repeat)
+		:
+		repeat_(repeat)
+	{
+	}
+
+	template <typename T>
+	size_t Encode(const T* values, BitWriter& writer)
+	{
+		size_t value = *values;
+		size_t count = 0;
+		for (; count<repeat_; ++count) {
+			if (values[count] != 0) {
+				break;
+			}
+		}
+		if (count == repeat_ && values[repeat_] == 1) {
+			writer.putBit(false);
+			writer.putBit(false);
+			writer.putBit(true);
+			return repeat_+1;
+		}else if (value == 0) {
+			writer.putBit(true);
+			return 1;			
+		}else if (value == 1) {
+			writer.putBit(false);
+			writer.putBit(true);
+			return 1;		
+		}else {
+			size_t value = *values;
+			for (size_t i=0; i<value+1; ++i) {
+				writer.putBit(false);
+			}
+			writer.putBit(true);
+			return 1;
+		}
+	}
+
+	size_t Decode(BitReader& reader)
+	{
+		return 0;
+	}
+	
+private:
+	size_t repeat_;	
+};
+
+
 enum RiceCoderFlag {
 	None = 0xF,
 };
+
+template <typename T>
+size_t modifiedUnaryEncode(
+	const T* src, size_t srcLen,
+	unsigned char* tmp
+	)
+{
+	BitWriter writer(tmp);
+	ModifiedUnaryCoder uc(7);
+	size_t i=0;
+	size_t pc = 0;
+	while (i<srcLen) {
+		size_t progress = uc.Encode(src+i, writer);
+		if (progress != 1) ++pc;
+		i += progress;
+	}
+	return writer.nBytes();
+}
 
 size_t repeationCompress(
 	const unsigned char* src, size_t srcLen,
 	unsigned char* tmp
 	)
 {
-	int repeatHist[1024] = {0};
+	int repeatHist[1024*4] = {0};
 	int repeat = 0;
 
 	BitWriter bitWriter(tmp);
@@ -229,15 +298,53 @@ size_t repeationDecompress(
 	return bitWriter.nBytes();
 }
 
+void findZeroOneInfos(
+	size_t hBlockCount,
+	size_t vBlockCount,
+	const int* src,
+	unsigned char* dst,
+	size_t limit
+	)
+{
+	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
+	const int* from = src;
+	
+	// pass DC0
+	from += totalBlockCount;
+	
+	std::fill(dst, dst+totalBlockCount, 255);
+	
+	for (size_t i=1; i<8; ++i) {
+		unsigned char blockSize = 1 + i*2;
+		if (i<limit) {
+			from += blockSize * totalBlockCount;
+			continue;
+		}
+		for (size_t j=0; j<totalBlockCount; ++j) {
+			for (size_t k=0; k<blockSize; ++k) {
+				int v = abs(from[k]);
+				if (v > 1) {
+					dst[j] = 0;
+					break;
+				}
+			}
+			from += blockSize;
+		}
+	}
+}
+
 size_t compressSub(
 	ICompressor& compressor,
-	int* src, size_t srcLen,
+	int* src,
+	const unsigned char* pZeroOneInfos,
+	size_t blockCount, size_t blockSize,
 	unsigned char* dest, size_t destLen,
 	unsigned char* tmp,
 	unsigned char* tmp2
 	)
 {
 	unsigned char* initialDest = dest;
+	size_t srcLen = blockCount * blockSize;
 	
 	assert(destLen > 4);
 	
@@ -245,23 +352,30 @@ size_t compressSub(
 	int maxi = boost::integer_traits<int>::const_min;
 	
 	int hists[1024] = {0};
+	int zeroRepeat = 0;
+	int zeroRepeatHist[1024*4] = {0};
 	BitWriter signFlags(dest+4);
 	for (size_t i=0; i<srcLen; ++i) {
 		int val = src[i];
 		mini = std::min(val, mini);
 		maxi = std::max(val, maxi);
 		if (val == 0) {
-			;
-		}else if (val < 0) {
-			signFlags.putBit(false);
+			++zeroRepeat;
 		}else {
-			signFlags.putBit(true);
+			signFlags.putBit(val > 0);
+			++zeroRepeatHist[zeroRepeat];
+			zeroRepeat = 0;
 		}
 		val = std::abs(val);
 		src[i] = val;
 		
 		++hists[val];
 	}
+	if (zeroRepeat) {
+		++zeroRepeatHist[zeroRepeat];
+		zeroRepeat = 0;			
+	}
+	
 	
 	uint32_t signFlagBytes = signFlags.nBytes();
 	*((size_t*)dest) = signFlagBytes;
@@ -282,9 +396,9 @@ size_t compressSub(
 		b = 4;
 	}else if (max > 128+64) {
 		b = 3;
-	}else if (max > 128) {
+	}else if (max > 96) {
 		b = 2;
-	}else if (max > 64) {
+	}else if (max > 32) {
 		b = 1;
 	}else {
 		b = 0;
@@ -294,12 +408,35 @@ size_t compressSub(
 	
 	BitWriter bitWriter(tmp2);
 	RiceCoder riceCoder(b);
-	for (size_t i=0; i<srcLen; ++i) {
-		riceCoder.Encode(src[i], bitWriter);
+	
+	int* from = src;
+	if (pZeroOneInfos) {
+		for (size_t i=0; i<blockCount; ++i) {
+			if (pZeroOneInfos[i]) {
+				for (size_t j=0; j<blockSize; ++j) {
+					bitWriter.putBit(src[i*blockSize+j] == 0);	
+				}
+			}
+		}
+		for (size_t i=0; i<blockCount; ++i) {
+			if (!pZeroOneInfos[i]) {
+				for (size_t j=0; j<blockSize; ++j) {
+					riceCoder.Encode(src[i*blockSize+j], bitWriter);	
+				}
+			}
+		}
+	}else {
+		for (size_t i=0; i<blockCount; ++i) {
+			for (size_t j=0; j<blockSize; ++j) {
+				riceCoder.Encode(*from++, bitWriter);	
+			}
+		}	
 	}
 	size_t bytesLen = bitWriter.nBytes();
 	
 	size_t compressedLen = 0;
+	
+	size_t modifiedUnaryEncodedLen = modifiedUnaryEncode(src, srcLen, dest);
 
 	compressedLen = compressor.Compress(tmp2, bytesLen, dest+6, -1);
 	unsigned char* dest2 = (compressedLen < initialCompressedLen) ? tmp : (dest+6);
@@ -343,34 +480,26 @@ size_t compress(
 	ICompressor& compressor,
 	size_t hBlockCount,
 	size_t vBlockCount,
-	const int* src,
-	int* tmp,
+	const unsigned char* pZeroOneInfos,
+	size_t zeroOneLimit,
+	int* src,
+	unsigned char* tmp1,
 	unsigned char* tmp2,
 	unsigned char* tmp3,
 	unsigned char* dest, size_t destLen
 	)
 {
 	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
-	const size_t fromWidth = hBlockCount * 8;
-	const size_t fromWidth8 = fromWidth * 8;
-
-	const int* from = src;
-	int* to = tmp;
-
-	int readPos;
-	// DC0
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
-	}
 	
-	// paeth prediction to DC0
-	to -= totalBlockCount;
+	int* from = src;
+	
+	size_t progress = 0;
+
+	// DC
+	
+	// paeth prediction
+	int* to = (int*) tmp3;
+	std::copy(from, from+totalBlockCount, to);
 	// first row
 	int left = *to;
 	int above = 0;
@@ -391,7 +520,7 @@ size_t compress(
 		left = cur;
 		upperLeft = above;
 		++to;
-		int fromPos = fromLineOffset + 8;
+		int fromPos = fromLineOffset + 1;
 		for (size_t x=1; x<hBlockCount; ++x) {
 			above = from[fromPos];
 			cur = *to;
@@ -399,166 +528,44 @@ size_t compress(
 			++to;
 			left = cur;
 			upperLeft = above;
-			fromPos += 8;
+			++fromPos;
 		}
-		fromLineOffset += fromWidth8;
+		fromLineOffset += hBlockCount;
 	}
-
-	size_t progress = 0;
-	progress += compressSub(compressor, tmp, totalBlockCount, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
-
-	// AC1
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+1];
-			*to++ = from[fromPos+fromWidth*1+0];
-			*to++ = from[fromPos+fromWidth*1+1];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
-	}
-	progress += compressSub(compressor, tmp, totalBlockCount*3, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
-
-	// AC2
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+2];
-			*to++ = from[fromPos+fromWidth*1+2];
-			*to++ = from[fromPos+fromWidth*2+0];
-			*to++ = from[fromPos+fromWidth*2+1];
-			*to++ = from[fromPos+fromWidth*2+2];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
-	}
-	progress += compressSub(compressor, tmp, totalBlockCount*5, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
-
-	// AC3
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+3];
-			*to++ = from[fromPos+fromWidth*1+3];
-			*to++ = from[fromPos+fromWidth*2+3];
-			*to++ = from[fromPos+fromWidth*3+0];
-			*to++ = from[fromPos+fromWidth*3+1];
-			*to++ = from[fromPos+fromWidth*3+2];
-			*to++ = from[fromPos+fromWidth*3+3];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
-	}
-	progress += compressSub(compressor, tmp, totalBlockCount*7, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
 	
-	// AC4
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+4];
-			*to++ = from[fromPos+fromWidth*1+4];
-			*to++ = from[fromPos+fromWidth*2+4];
-			*to++ = from[fromPos+fromWidth*3+4];
-			*to++ = from[fromPos+fromWidth*4+0];
-			*to++ = from[fromPos+fromWidth*4+1];
-			*to++ = from[fromPos+fromWidth*4+2];
-			*to++ = from[fromPos+fromWidth*4+3];
-			*to++ = from[fromPos+fromWidth*4+4];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
-	}
-	progress += compressSub(compressor, tmp, totalBlockCount*9, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
+	to -= totalBlockCount;
+	progress += compressSub(compressor, to, 0, totalBlockCount, 1, dest+progress, destLen-progress, tmp1, tmp2);
+	from += totalBlockCount;
 	
-	// AC5
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+5];
-			*to++ = from[fromPos+fromWidth*1+5];
-			*to++ = from[fromPos+fromWidth*2+5];
-			*to++ = from[fromPos+fromWidth*3+5];
-			*to++ = from[fromPos+fromWidth*4+5];
-			*to++ = from[fromPos+fromWidth*5+0];
-			*to++ = from[fromPos+fromWidth*5+1];
-			*to++ = from[fromPos+fromWidth*5+2];
-			*to++ = from[fromPos+fromWidth*5+3];
-			*to++ = from[fromPos+fromWidth*5+4];
-			*to++ = from[fromPos+fromWidth*5+5];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
+	// zero one flags
+	BitWriter bw(dest+progress);
+	for (size_t i=0; i<totalBlockCount; ++i) {
+		bw.putBit(pZeroOneInfos[i]);
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*11, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
+	progress += bw.nBytes();
 	
-	// AC6
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+6];
-			*to++ = from[fromPos+fromWidth*1+6];
-			*to++ = from[fromPos+fromWidth*2+6];
-			*to++ = from[fromPos+fromWidth*3+6];
-			*to++ = from[fromPos+fromWidth*4+6];
-			*to++ = from[fromPos+fromWidth*5+6];
-			*to++ = from[fromPos+fromWidth*6+0];
-			*to++ = from[fromPos+fromWidth*6+1];
-			*to++ = from[fromPos+fromWidth*6+2];
-			*to++ = from[fromPos+fromWidth*6+3];
-			*to++ = from[fromPos+fromWidth*6+4];
-			*to++ = from[fromPos+fromWidth*6+5];
-			*to++ = from[fromPos+fromWidth*6+6];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
+	// AC
+	for (size_t i=1; i<8; ++i) {
+		const unsigned char* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
+		size_t blockSize = 1 + i * 2;
+		progress += compressSub(compressor, from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2);
+		from += totalBlockCount * blockSize;
 	}
-	progress += compressSub(compressor, tmp, totalBlockCount*13, dest+progress, destLen-progress, tmp2, tmp3);
-	to = tmp;
-	
-	// AC7
-	readPos = 0;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int fromPos = readPos;
-		for (size_t x=0; x<hBlockCount; ++x) {
-			*to++ = from[fromPos+fromWidth*0+7];
-			*to++ = from[fromPos+fromWidth*1+7];
-			*to++ = from[fromPos+fromWidth*2+7];
-			*to++ = from[fromPos+fromWidth*3+7];
-			*to++ = from[fromPos+fromWidth*4+7];
-			*to++ = from[fromPos+fromWidth*5+7];
-			*to++ = from[fromPos+fromWidth*6+7];
-			*to++ = from[fromPos+fromWidth*7+0];
-			*to++ = from[fromPos+fromWidth*7+1];
-			*to++ = from[fromPos+fromWidth*7+2];
-			*to++ = from[fromPos+fromWidth*7+3];
-			*to++ = from[fromPos+fromWidth*7+4];
-			*to++ = from[fromPos+fromWidth*7+5];
-			*to++ = from[fromPos+fromWidth*7+6];
-			*to++ = from[fromPos+fromWidth*7+7];
-			fromPos += 8;
-		}
-		readPos += fromWidth8;
-	}
-	progress += compressSub(compressor, tmp, totalBlockCount*15, dest+progress, destLen-progress, tmp2, tmp3);
-	
+		
 	return progress;
 }
 
-size_t decompressSub(ICompressor& compressor, const unsigned char* src, unsigned char* tmp, int* dest, size_t destLen)
+size_t decompressSub(
+	ICompressor& compressor,
+	const unsigned char* src,
+	const unsigned char* pZeroOneInfos,
+	unsigned char* tmp,
+	int* dest,
+	size_t totalBlockCount,
+	size_t blockSize)
 {
+	size_t destLen = totalBlockCount * blockSize;
+
 	const unsigned char* initialSrc = src;
 	
 	size_t signFlagBytes = *(size_t*)src;
@@ -599,20 +606,199 @@ size_t decompressSub(ICompressor& compressor, const unsigned char* src, unsigned
 	}else {
 		RiceCoder riceCoder(b);
 		BitReader bitReader(tmp);
-		for (size_t i=0; i<destLen; ++i) {
-			int val = riceCoder.Decode(bitReader);
-			if (val != 0) {
-				if (!signFlags.getBit()) {
-					val = -val;
+		if (pZeroOneInfos) {
+			for (size_t i=0; i<totalBlockCount; ++i) {
+				if (pZeroOneInfos[i]) {
+					for (size_t j=0; j<blockSize; ++j) {
+						dest[i*blockSize+j] = bitReader.getBit() ? 0 : 1;
+					}			
 				}
 			}
-			dest[i] = val;
+			for (size_t i=0; i<totalBlockCount; ++i) {
+				if (!pZeroOneInfos[i]) {
+					for (size_t j=0; j<blockSize; ++j) {
+						dest[i*blockSize+j] = riceCoder.Decode(bitReader);
+					}			
+				}
+			}
+		}else {
+			for (size_t i=0; i<destLen; ++i) {
+				dest[i] = riceCoder.Decode(bitReader);
+			}
+		}
+		for (size_t i=0; i<destLen; ++i) {
+			int val = dest[i];
+			if (val != 0 && !signFlags.getBit()) {
+				dest[i] = -val;
+			}
 		}
 	}
 //	showMinus(dest, dest, destLen);
 		
 	return 4 + signFlagBytes + + 6 + len;
 }
+
+void reorderByFrequency(
+	size_t hBlockCount,
+	size_t vBlockCount,
+	const int* src,
+	int* dst
+	)
+{
+	const size_t fromWidth = hBlockCount * 8;
+	const size_t fromWidth8 = fromWidth * 8;
+	
+	int readPos;
+	const int* from = src;
+	int* to = dst;
+	
+	// DC0
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+	
+	// AC1
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+1];
+			*to++ = from[fromPos+fromWidth*1+0];
+			*to++ = from[fromPos+fromWidth*1+1];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+	
+	// AC2
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+2];
+			*to++ = from[fromPos+fromWidth*1+2];
+			*to++ = from[fromPos+fromWidth*2+0];
+			*to++ = from[fromPos+fromWidth*2+1];
+			*to++ = from[fromPos+fromWidth*2+2];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+
+	// AC3
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+3];
+			*to++ = from[fromPos+fromWidth*1+3];
+			*to++ = from[fromPos+fromWidth*2+3];
+			*to++ = from[fromPos+fromWidth*3+0];
+			*to++ = from[fromPos+fromWidth*3+1];
+			*to++ = from[fromPos+fromWidth*3+2];
+			*to++ = from[fromPos+fromWidth*3+3];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+
+	// AC4
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+4];
+			*to++ = from[fromPos+fromWidth*1+4];
+			*to++ = from[fromPos+fromWidth*2+4];
+			*to++ = from[fromPos+fromWidth*3+4];
+			*to++ = from[fromPos+fromWidth*4+0];
+			*to++ = from[fromPos+fromWidth*4+1];
+			*to++ = from[fromPos+fromWidth*4+2];
+			*to++ = from[fromPos+fromWidth*4+3];
+			*to++ = from[fromPos+fromWidth*4+4];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+
+
+	// AC5
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+5];
+			*to++ = from[fromPos+fromWidth*1+5];
+			*to++ = from[fromPos+fromWidth*2+5];
+			*to++ = from[fromPos+fromWidth*3+5];
+			*to++ = from[fromPos+fromWidth*4+5];
+			*to++ = from[fromPos+fromWidth*5+0];
+			*to++ = from[fromPos+fromWidth*5+1];
+			*to++ = from[fromPos+fromWidth*5+2];
+			*to++ = from[fromPos+fromWidth*5+3];
+			*to++ = from[fromPos+fromWidth*5+4];
+			*to++ = from[fromPos+fromWidth*5+5];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+
+	// AC6
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+6];
+			*to++ = from[fromPos+fromWidth*1+6];
+			*to++ = from[fromPos+fromWidth*2+6];
+			*to++ = from[fromPos+fromWidth*3+6];
+			*to++ = from[fromPos+fromWidth*4+6];
+			*to++ = from[fromPos+fromWidth*5+6];
+			*to++ = from[fromPos+fromWidth*6+0];
+			*to++ = from[fromPos+fromWidth*6+1];
+			*to++ = from[fromPos+fromWidth*6+2];
+			*to++ = from[fromPos+fromWidth*6+3];
+			*to++ = from[fromPos+fromWidth*6+4];
+			*to++ = from[fromPos+fromWidth*6+5];
+			*to++ = from[fromPos+fromWidth*6+6];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+
+	// AC7
+	readPos = 0;
+	for (size_t y=0; y<vBlockCount; ++y) {
+		int fromPos = readPos;
+		for (size_t x=0; x<hBlockCount; ++x) {
+			*to++ = from[fromPos+fromWidth*0+7];
+			*to++ = from[fromPos+fromWidth*1+7];
+			*to++ = from[fromPos+fromWidth*2+7];
+			*to++ = from[fromPos+fromWidth*3+7];
+			*to++ = from[fromPos+fromWidth*4+7];
+			*to++ = from[fromPos+fromWidth*5+7];
+			*to++ = from[fromPos+fromWidth*6+7];
+			*to++ = from[fromPos+fromWidth*7+0];
+			*to++ = from[fromPos+fromWidth*7+1];
+			*to++ = from[fromPos+fromWidth*7+2];
+			*to++ = from[fromPos+fromWidth*7+3];
+			*to++ = from[fromPos+fromWidth*7+4];
+			*to++ = from[fromPos+fromWidth*7+5];
+			*to++ = from[fromPos+fromWidth*7+6];
+			*to++ = from[fromPos+fromWidth*7+7];
+			fromPos += 8;
+		}
+		readPos += fromWidth8;
+	}
+	
+}
+
 
 void decompress(
 	ICompressor& decompressor,
@@ -635,7 +821,7 @@ void decompress(
 
 	int writePos;
 	
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount);
+	src += decompressSub(decompressor, src, 0, tmp, from, totalBlockCount, 1);
 	// DC0
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -686,7 +872,16 @@ void decompress(
 		toLineOffset += toWidth8;
 	}
 	
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*3);
+	// zero one flags
+	BitReader reader(src);
+	std::vector<unsigned char> zeroOneFlags(totalBlockCount);
+	unsigned char* pZeroOneFlags = &zeroOneFlags[0];
+	for (size_t i=0; i<totalBlockCount; ++i) {
+		zeroOneFlags[i] = reader.getBit();
+	}
+	src += reader.nBytes();
+	
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 3);
 	// AC1
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -701,7 +896,7 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*5);
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 5);
 	// AC2
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -717,7 +912,7 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*7);
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 7);
 	// AC3
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -735,7 +930,7 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*9);
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 9);
 	// AC4
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -755,7 +950,7 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*11);
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 11);
 	// AC5
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -777,7 +972,7 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*13);
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 13);
 	// AC6
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -801,7 +996,7 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, tmp, from, totalBlockCount*15);
+	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 15);
 	// AC7
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {

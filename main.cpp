@@ -86,6 +86,13 @@ int _tmain(int argc, _TCHAR* argv[])
 	
 	int* pWork = &work[0];
 	
+	reorderByFrequency(hBlockCount, vBlockCount, &work[0], &work2[0]);
+	
+	std::vector<unsigned char> zeroOneInfos(totalBlockCount);
+	unsigned char* pZeroOneInfos = &zeroOneInfos[0];
+	size_t zeroOneLimit = 1;
+	findZeroOneInfos(hBlockCount, vBlockCount, &work2[0], &zeroOneInfos[0], zeroOneLimit);
+	
 	BZip2Compressor compressor;
 	size_t compressedLen = 0;
 	
@@ -93,7 +100,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	std::vector<unsigned char> work3(storageSize);
 	std::vector<unsigned char> work4(storageSize);
 	std::vector<unsigned char> compressed(storageSize);
-	compressedLen = compress(compressor, hBlockCount, vBlockCount, &work[0], &work2[0], &work3[0], &work4[0], &compressed[0], compressed.size());
+	compressedLen = compress(compressor, hBlockCount, vBlockCount, pZeroOneInfos, zeroOneLimit, &work2[0], (unsigned char*)&work[0], &work3[0], &work4[0], &compressed[0], compressed.size());
 	
 	std::fill(work.begin(), work.end(), 0);
 	std::fill(work2.begin(), work2.end(), 0);
