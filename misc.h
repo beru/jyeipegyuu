@@ -29,33 +29,6 @@ void scatter(
 	}
 }
 
-void cutoff(
-	size_t hBlockCount, size_t vBlockCount,
-	int* data, int lineOffsetBytes,
-	const int table[8][8]
-	)
-{
-
-	int* srcLine = data;
-	for (size_t y=0; y<vBlockCount; ++y) {
-		int* workSrcLine = srcLine;
-		for (size_t yi=0; yi<8; ++yi) {
-			int* pWork = workSrcLine;
-			const int* tableLine = table[yi];
-			for (size_t x=0; x<hBlockCount; ++x) {
-				for (size_t xi=0; xi<8; ++xi) {
-					int value = *pWork;
-					int newValue = std::min(tableLine[xi], std::abs(value));
-					*pWork = (value < 0) ? -newValue : newValue;
-					++pWork;
-				}
-			}
-			OffsetPtr(workSrcLine, lineOffsetBytes);
-		}
-		OffsetPtr(srcLine, lineOffsetBytes * 8);
-	}
-}
-
 int paethPredictor(int left, int above, int upperLeft)
 {
 	int initial = left + (above - upperLeft);
@@ -300,49 +273,15 @@ size_t compressSub(
 	
 	assert(destLen > 4);
 	
-	int mini = boost::integer_traits<int>::const_max;
-	int maxi = boost::integer_traits<int>::const_min;
+	int mini = cinfo.mini;
+	int maxi = cinfo.maxi;
+	size_t max = std::max(maxi, std::abs(mini));
 	
 	int* hists = cinfo.hists;
 	int* phists = cinfo.phists;
 	int* mhists = cinfo.mhists;
-	int zeroRepeat = 0;
-	int* zeroRepeatHist = cinfo.zeroRepeatHist;
-	BitWriter signFlags(dest+4);
-	for (size_t i=0; i<srcCount; ++i) {
-		int val = src[i];
-		mini = std::min(val, mini);
-		maxi = std::max(val, maxi);
-		if (val == 0) {
-			++zeroRepeat;
-		}else {
-			signFlags.putBit(val > 0);
-			++zeroRepeatHist[zeroRepeat];
-			zeroRepeat = 0;
-		}
-		if (val >= 0) {
-			++phists[val];
-		}else {
-			++mhists[-val];
-		}
-		val = std::abs(val);
-		src[i] = val;
-		
-		++hists[val];
-	}
-	if (zeroRepeat) {
-		++zeroRepeatHist[zeroRepeat];
-		zeroRepeat = 0;			
-	}
-	
-	uint32_t signFlagsLen = signFlags.nBytes();
-	*((size_t*)dest) = signFlagsLen;
-	
-	dest += (4 + signFlagsLen);
-	destLen -= (4 + signFlagsLen);
 	
 	int b = 0;
-	size_t max = std::max(maxi, std::abs(mini));
 	
 	if (max > 2048) {
 		b = 7;
@@ -421,9 +360,8 @@ size_t compressSub(
 	dest += len;
 	
 	size_t destDiff = dest - initialDest;
-
+	
 	cinfo.srcCount = srcCount;
-	cinfo.signFlagsLen = signFlagsLen;
 	cinfo.mini = mini;
 	cinfo.maxi = maxi;
 	cinfo.max = max;
@@ -437,30 +375,18 @@ size_t compressSub(
 	return destDiff;
 }
 
-size_t compress(
-	ICompressor& compressor,
+void paethPredictEncode(
 	size_t hBlockCount,
 	size_t vBlockCount,
-	const unsigned char* pZeroOneInfos,
-	size_t zeroOneLimit,
-	CompressInfo compressInfos[8],
 	int* src,
-	unsigned char* tmp1,
-	unsigned char* tmp2,
-	unsigned char* tmp3,
-	unsigned char* dest, size_t destLen
+	int* tmp
 	)
 {
 	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
-	
-	int* from = src;
-	
-	size_t progress = 0;
 
-	// DC
-	
 	// paeth prediction
-	int* to = (int*) tmp3;
+	int* from = src;
+	int* to = tmp;
 	std::copy(from, from+totalBlockCount, to);
 	// first row
 	int left = *to;
@@ -494,20 +420,138 @@ size_t compress(
 		}
 		fromLineOffset += hBlockCount;
 	}
+	std::copy(tmp, tmp+totalBlockCount, src);
+}
+
+void paethPredictDecode(
+	size_t hBlockCount,
+	size_t vBlockCount,
+	int* src,
+	int* tmp
+	)
+{
+	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
 	
-	to -= totalBlockCount;
-	progress += compressSub(compressor, to, 0, totalBlockCount, 1, dest+progress, destLen-progress, tmp1, tmp2, compressInfos[0]);
-	from += totalBlockCount;
+	int* to = tmp;
+	std::copy(src,src+totalBlockCount, to);
 	
-	// zero one flags
-	BitWriter bw(dest+progress);
-	for (size_t i=0; i<totalBlockCount; ++i) {
-		bw.putBit(pZeroOneInfos[i]);
+	// paeth predictor to DC0
+	// first row
+	int left = *to;
+	int above = 0;
+	int upperLeft = 0;
+	int cur = 0;
+
+	int writePos;
+	writePos = 1;
+	for (size_t i=1; i<hBlockCount; ++i) {
+		cur = to[writePos] + left;
+		to[writePos] = cur;
+		left = cur;
+		++writePos;
 	}
-	progress += bw.nBytes();
+	int toLineOffset = hBlockCount;
+	int paeth = 0;
+	for (size_t y=1; y<vBlockCount; ++y) {
+		above = to[toLineOffset - hBlockCount];
+		paeth = to[toLineOffset];
+		cur = paeth + paethPredictor(0, above, 0);
+		to[toLineOffset] = cur;
+		writePos = toLineOffset + 1;
+		left = cur;
+		upperLeft = above;
+		for (size_t x=1; x<hBlockCount; ++x) {
+			above = to[writePos - hBlockCount];
+			paeth = to[writePos];
+			cur = paeth + paethPredictor(left, above, upperLeft);
+			to[writePos] = cur;
+			left = cur;
+			upperLeft = above;
+			++writePos;
+		}
+		toLineOffset += hBlockCount;
+	}
+
+	std::copy(to, to+totalBlockCount, src);
+
+}
+
+size_t collectInfos(
+	int* src,
+	size_t blockCount,
+	unsigned char* signFlags,
+	CompressInfo compressInfos[8]
+	)
+{
+	size_t count = 0;
+	int* from = src;
+	for (size_t i=0; i<8; ++i) {
+		size_t blockSize = 1 + i * 2;
+		CompressInfo& ci = compressInfos[i];
+
+		int mini = boost::integer_traits<int>::const_max;
+		int maxi = boost::integer_traits<int>::const_min;
+		
+		int* hists = ci.hists;
+		int* phists = ci.phists;
+		int* mhists = ci.mhists;
+		int zeroRepeat = 0;
+		int* zeroRepeatHist = ci.zeroRepeatHist;
+		size_t srcCount = blockCount * blockSize;
+		for (size_t j=0; j<srcCount; ++j) {
+			int val = from[j];
+			mini = std::min(val, mini);
+			maxi = std::max(val, maxi);
+			if (val == 0) {
+				++zeroRepeat;
+			}else {
+				signFlags[count++] = (val > 0) ? 255 : 0;
+				++zeroRepeatHist[zeroRepeat];
+				zeroRepeat = 0;
+			}
+			if (val >= 0) {
+				++phists[val];
+			}else {
+				++mhists[-val];
+			}
+			val = std::abs(val);
+			from[j] = val;
+			
+			++hists[val];
+		}
+		if (zeroRepeat) {
+			++zeroRepeatHist[zeroRepeat];
+			zeroRepeat = 0;			
+		}
+		ci.mini = mini;
+		ci.maxi = maxi;
+		ci.max = std::max(maxi, std::abs(mini));
+		
+		from += srcCount;
+	}
+	return count;
+}
+
+size_t compress(
+	ICompressor& compressor,
+	size_t hBlockCount,
+	size_t vBlockCount,
+	const unsigned char* pZeroOneInfos,
+	size_t zeroOneLimit,
+	CompressInfo compressInfos[8],
+	int* src,
+	unsigned char* tmp1,
+	unsigned char* tmp2,
+	unsigned char* tmp3,
+	unsigned char* dest, size_t destLen
+	)
+{
+	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
 	
-	// AC
-	for (size_t i=1; i<8; ++i) {
+	int* from = src;
+	size_t progress = 0;
+	
+	for (size_t i=0; i<8; ++i) {
 		const unsigned char* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
 		size_t blockSize = 1 + i * 2;
 		progress += compressSub(compressor, from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, compressInfos[i]);
@@ -530,11 +574,6 @@ size_t decompressSub(
 
 	const unsigned char* initialSrc = src;
 	
-	size_t signFlagBytes = *(size_t*)src;
-	src += 4;
-	BitReader signFlags(src);
-	src += signFlagBytes;
-	
 	unsigned char compressFlag = *src++;
 	unsigned char b = *src++;
 	size_t len = *(size_t*)src;
@@ -556,15 +595,6 @@ size_t decompressSub(
 		
 	if (b == RiceCoderFlag::None) {
 		memcpy(dest, tmp, len2);
-		for (size_t i=0; i<len2/4; ++i) {
-			int val = dest[i];
-			if (val != 0) {
-				if (!signFlags.getBit()) {
-					dest[i] = -val;
-				}
-			}
-		}
-
 	}else {
 		RiceCoder riceCoder(b);
 		BitReader bitReader(tmp);
@@ -588,16 +618,10 @@ size_t decompressSub(
 				dest[i] = riceCoder.Decode(bitReader);
 			}
 		}
-		for (size_t i=0; i<destLen; ++i) {
-			int val = dest[i];
-			if (val != 0 && !signFlags.getBit()) {
-				dest[i] = -val;
-			}
-		}
 	}
 //	showMinus(dest, dest, destLen);
 		
-	return 4 + signFlagBytes + + 6 + len;
+	return 6 + len;
 }
 
 void reorderByFrequency(
@@ -761,89 +785,31 @@ void reorderByFrequency(
 	
 }
 
-
-void decompress(
-	ICompressor& decompressor,
+void reorderByPosition(
 	size_t hBlockCount,
 	size_t vBlockCount,
-	const unsigned char* src, size_t srcLen,
-	unsigned char* tmp, int* tmp2,
-	int* dest, size_t destLen
+	const int* src,
+	int* dest
 	)
 {
-	int* initialDest = dest;
-	const unsigned char* initialSrc = src;
-
-	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
 	const size_t toWidth = hBlockCount * 8;
-	const size_t toWidth8 = toWidth * 8;
+	const size_t toWidth8 = toWidth * 8;	
 	
-	int* from = tmp2;
+	const int* from = src;
 	int* to = dest;
-
-	int writePos;
+	int writePos = 0;
 	
-	src += decompressSub(decompressor, src, 0, tmp, from, totalBlockCount, 1);
 	// DC0
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
 		int toPos = writePos;
 		for (size_t x=0; x<hBlockCount; ++x) {
-			assert(toPos < destLen);
 			to[toPos] = *from++;
 			toPos += 8;
 		}
 		writePos += toWidth8;
 	}
 	
-	// paeth predictor to DC0
-	// first row
-	int left = *to;
-	int above = 0;
-	int upperLeft = 0;
-	int cur = 0;
-	writePos = 8;
-	for (size_t i=1; i<hBlockCount; ++i) {
-		cur = to[writePos] + left;
-		assert(writePos < destLen);
-		to[writePos] = cur;
-		left = cur;
-		writePos += 8;
-	}
-	int toLineOffset = toWidth8;
-	int paeth = 0;
-	for (size_t y=1; y<vBlockCount; ++y) {
-		above = to[toLineOffset - toWidth8];
-		paeth = to[toLineOffset];
-		cur = paeth + paethPredictor(0, above, 0);
-		assert(toLineOffset < destLen);
-		to[toLineOffset] = cur;
-		writePos = toLineOffset + 8;
-		left = cur;
-		upperLeft = above;
-		for (size_t x=1; x<hBlockCount; ++x) {
-			above = to[writePos - toWidth8];
-			paeth = to[writePos];
-			cur = paeth + paethPredictor(left, above, upperLeft);
-			assert(writePos < destLen);
-			to[writePos] = cur;
-			left = cur;
-			upperLeft = above;
-			writePos += 8;
-		}
-		toLineOffset += toWidth8;
-	}
-	
-	// zero one flags
-	BitReader reader(src);
-	std::vector<unsigned char> zeroOneFlags(totalBlockCount);
-	unsigned char* pZeroOneFlags = &zeroOneFlags[0];
-	for (size_t i=0; i<totalBlockCount; ++i) {
-		zeroOneFlags[i] = reader.getBit();
-	}
-	src += reader.nBytes();
-	
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 3);
 	// AC1
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -852,13 +818,11 @@ void decompress(
 			to[toPos+toWidth*0+1] = *from++;
 			to[toPos+toWidth*1+0] = *from++;
 			to[toPos+toWidth*1+1] = *from++;
-			assert(toPos+toWidth*1+1 < destLen);
 			toPos += 8;
 		}
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 5);
 	// AC2
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -874,7 +838,6 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 7);
 	// AC3
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -892,7 +855,6 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 9);
 	// AC4
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -912,7 +874,6 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 11);
 	// AC5
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -934,7 +895,6 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 13);
 	// AC6
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -958,7 +918,6 @@ void decompress(
 		writePos += toWidth8;
 	}
 
-	src += decompressSub(decompressor, src, pZeroOneFlags, tmp, from, totalBlockCount, 15);
 	// AC7
 	writePos = 0;
 	for (size_t y=0; y<vBlockCount; ++y) {
@@ -979,10 +938,36 @@ void decompress(
 			to[toPos+toWidth*7+5] = *from++;
 			to[toPos+toWidth*7+6] = *from++;
 			to[toPos+toWidth*7+7] = *from++;
-			assert(toPos+toWidth*7+7 < destLen);
 			toPos += 8;
 		}
 		writePos += toWidth8;
 	}
+	
+}
+
+size_t decompress(
+	ICompressor& decompressor,
+	size_t hBlockCount,
+	size_t vBlockCount,
+	const unsigned char* pZeroOneInfos,
+	size_t zeroOneLimit,
+	const unsigned char* src, size_t srcLen,
+	unsigned char* tmp, int* tmp2,
+	int* dest, size_t destLen
+	)
+{
+	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
+	
+	const unsigned char* from = src;
+	int* to = dest;
+	
+	for (size_t i=0; i<8; ++i) {
+		const unsigned char* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
+		size_t blockSize = 1 + i * 2;
+		from += decompressSub(decompressor, from, p01, tmp, to, totalBlockCount, blockSize);
+		to += totalBlockCount * blockSize;
+	}
+	
+	return from - src;
 }
 
