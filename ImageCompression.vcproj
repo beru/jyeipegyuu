@@ -298,10 +298,6 @@
 				>
 			</File>
 		</Filter>
-		<File
-			RelativePath=".\memo.txt"
-			>
-		</File>
 	</Files>
 	<Globals>
 	</Globals>

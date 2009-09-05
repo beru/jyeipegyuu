@@ -36,7 +36,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	File fo(f);
 	ImageInfo imageInfo;
 	ReadImageInfo(fo, imageInfo);
-
+	
 	size_t width = imageInfo.width;
 	size_t height = imageInfo.height;
 	assert(imageInfo.bitsPerSample == 8 && imageInfo.samplesPerPixel == 1);
@@ -45,24 +45,24 @@ int _tmain(int argc, _TCHAR* argv[])
 	std::vector<int> work(size);
 	std::vector<int> work2(size);
 	std::vector<unsigned char> out(size);
-
+	
 	unsigned char palettes[256 * 4];
 	ReadImageData(fo, &in[0], width, palettes);
 	fclose(f);
-
+	
 	for (size_t i=0; i<size; ++i) {
 		in[i] = palettes[4 * in[i]];
 	}
 	
 	Quantizer quantizer;
-	quantizer.init(6*8+1, 0, 0, false);
+	quantizer.init(6*8+0, 0, 0, true);
 	
 	const size_t hBlockCount = width / 8 + ((width % 8) ? 1 : 0);
 	const size_t vBlockCount = height / 8 + ((height % 8) ? 1 : 0);
 	const size_t totalBlockCount = hBlockCount * vBlockCount;
 	
 	encode(quantizer, hBlockCount, vBlockCount, &in[0], width, &work[0], width*sizeof(int));
-
+	
 	if (0) {	
 		int cutoff_table[8][8] = {
 			-1,-1,-1,-1,-1,-1, 1, 1,
@@ -100,21 +100,22 @@ int _tmain(int argc, _TCHAR* argv[])
 	std::vector<unsigned char> work3(storageSize);
 	std::vector<unsigned char> work4(storageSize);
 	std::vector<unsigned char> compressed(storageSize);
-	compressedLen = compress(compressor, hBlockCount, vBlockCount, pZeroOneInfos, zeroOneLimit, &work2[0], (unsigned char*)&work[0], &work3[0], &work4[0], &compressed[0], compressed.size());
+	CompressInfo compressInfos[8] = {0};
+	compressedLen = compress(compressor, hBlockCount, vBlockCount, pZeroOneInfos, zeroOneLimit, compressInfos, &work2[0], (unsigned char*)&work[0], &work3[0], &work4[0], &compressed[0], compressed.size());
 	
 	std::fill(work.begin(), work.end(), 0);
 	std::fill(work2.begin(), work2.end(), 0);
-
+	
 	std::vector<unsigned char> tmp(compressed.size());
 	decompress(compressor, hBlockCount, vBlockCount, &compressed[0], compressedLen, &tmp[0], &work[0], &work2[0], work2.size());
 	
 	decode(quantizer, hBlockCount, vBlockCount, &work2[0], width*sizeof(int), &out[0], width);
 	unsigned char* pOutput = &out[0];
-
+	
 	//FILE* of = _tfopen(_T("out.raw"), _T("wb"));
 	//fwrite(pOutput, 1, size, of);
 	//fclose(of);
-
+	
 	_tprintf(_T("%f%% %d bytes"), (100.0 * compressedLen) / size, compressedLen);
 	return 0;
 }

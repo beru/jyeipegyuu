@@ -174,78 +174,9 @@ private:
 	size_t shift_;
 };
 
-class ModifiedUnaryCoder
-{
-public:
-	ModifiedUnaryCoder(size_t repeat)
-		:
-		repeat_(repeat)
-	{
-	}
-
-	template <typename T>
-	size_t Encode(const T* values, BitWriter& writer)
-	{
-		size_t value = *values;
-		size_t count = 0;
-		for (; count<repeat_; ++count) {
-			if (values[count] != 0) {
-				break;
-			}
-		}
-		if (count == repeat_ && values[repeat_] == 1) {
-			writer.putBit(false);
-			writer.putBit(false);
-			writer.putBit(true);
-			return repeat_+1;
-		}else if (value == 0) {
-			writer.putBit(true);
-			return 1;			
-		}else if (value == 1) {
-			writer.putBit(false);
-			writer.putBit(true);
-			return 1;		
-		}else {
-			size_t value = *values;
-			for (size_t i=0; i<value+1; ++i) {
-				writer.putBit(false);
-			}
-			writer.putBit(true);
-			return 1;
-		}
-	}
-
-	size_t Decode(BitReader& reader)
-	{
-		return 0;
-	}
-	
-private:
-	size_t repeat_;	
-};
-
-
 enum RiceCoderFlag {
 	None = 0xF,
 };
-
-template <typename T>
-size_t modifiedUnaryEncode(
-	const T* src, size_t srcLen,
-	unsigned char* tmp
-	)
-{
-	BitWriter writer(tmp);
-	ModifiedUnaryCoder uc(7);
-	size_t i=0;
-	size_t pc = 0;
-	while (i<srcLen) {
-		size_t progress = uc.Encode(src+i, writer);
-		if (progress != 1) ++pc;
-		i += progress;
-	}
-	return writer.nBytes();
-}
 
 size_t repeationCompress(
 	const unsigned char* src, size_t srcLen,
@@ -333,6 +264,26 @@ void findZeroOneInfos(
 	}
 }
 
+struct CompressInfo
+{
+	int mini;
+	int maxi;
+	size_t max;
+	int hists[1024];
+	int phists[1024];
+	int mhists[1024];
+	int zeroRepeatHist[1024*4];
+	unsigned char riceCoderParam;
+	
+	size_t srcCount;
+	size_t signFlagsLen;
+	size_t initialCompressedLen;
+	size_t riceCodedLen;
+	size_t compressedLen;
+	size_t repeationCompressedLen;
+	size_t totalLen;
+};
+
 size_t compressSub(
 	ICompressor& compressor,
 	int* src,
@@ -340,22 +291,25 @@ size_t compressSub(
 	size_t blockCount, size_t blockSize,
 	unsigned char* dest, size_t destLen,
 	unsigned char* tmp,
-	unsigned char* tmp2
+	unsigned char* tmp2,
+	CompressInfo& cinfo
 	)
 {
 	unsigned char* initialDest = dest;
-	size_t srcLen = blockCount * blockSize;
+	size_t srcCount = blockCount * blockSize;
 	
 	assert(destLen > 4);
 	
 	int mini = boost::integer_traits<int>::const_max;
 	int maxi = boost::integer_traits<int>::const_min;
 	
-	int hists[1024] = {0};
+	int* hists = cinfo.hists;
+	int* phists = cinfo.phists;
+	int* mhists = cinfo.mhists;
 	int zeroRepeat = 0;
-	int zeroRepeatHist[1024*4] = {0};
+	int* zeroRepeatHist = cinfo.zeroRepeatHist;
 	BitWriter signFlags(dest+4);
-	for (size_t i=0; i<srcLen; ++i) {
+	for (size_t i=0; i<srcCount; ++i) {
 		int val = src[i];
 		mini = std::min(val, mini);
 		maxi = std::max(val, maxi);
@@ -365,6 +319,11 @@ size_t compressSub(
 			signFlags.putBit(val > 0);
 			++zeroRepeatHist[zeroRepeat];
 			zeroRepeat = 0;
+		}
+		if (val >= 0) {
+			++phists[val];
+		}else {
+			++mhists[-val];
 		}
 		val = std::abs(val);
 		src[i] = val;
@@ -376,12 +335,11 @@ size_t compressSub(
 		zeroRepeat = 0;			
 	}
 	
+	uint32_t signFlagsLen = signFlags.nBytes();
+	*((size_t*)dest) = signFlagsLen;
 	
-	uint32_t signFlagBytes = signFlags.nBytes();
-	*((size_t*)dest) = signFlagBytes;
-	
-	dest += (4 + signFlagBytes);
-	destLen -= (4 + signFlagBytes);
+	dest += (4 + signFlagsLen);
+	destLen -= (4 + signFlagsLen);
 	
 	int b = 0;
 	size_t max = std::max(maxi, std::abs(mini));
@@ -404,7 +362,7 @@ size_t compressSub(
 		b = 0;
 	}
 	
-	size_t initialCompressedLen = compressor.Compress((const unsigned char*)src, srcLen*4, tmp, -1);
+	size_t initialCompressedLen = compressor.Compress((const unsigned char*)src, srcCount*4, tmp, -1);
 	
 	BitWriter bitWriter(tmp2);
 	RiceCoder riceCoder(b);
@@ -432,30 +390,25 @@ size_t compressSub(
 			}
 		}	
 	}
-	size_t bytesLen = bitWriter.nBytes();
-	
-	size_t compressedLen = 0;
-	
-	size_t modifiedUnaryEncodedLen = modifiedUnaryEncode(src, srcLen, dest);
-
-	compressedLen = compressor.Compress(tmp2, bytesLen, dest+6, -1);
+	size_t riceCodedLen = bitWriter.nBytes();
+	size_t compressedLen = compressedLen = compressor.Compress(tmp2, riceCodedLen, dest+6, -1);
 	unsigned char* dest2 = (compressedLen < initialCompressedLen) ? tmp : (dest+6);
-	size_t repeationCompressedLen = repeationCompress(tmp2, bytesLen, dest2);
+	size_t repeationCompressedLen = repeationCompress(tmp2, riceCodedLen, dest2);
 	
 	size_t len = 0;
-	if (initialCompressedLen < compressedLen && initialCompressedLen < bytesLen && initialCompressedLen < repeationCompressedLen) {
+	if (initialCompressedLen < compressedLen && initialCompressedLen < riceCodedLen && initialCompressedLen < repeationCompressedLen) {
 		*dest++ = 1;
 		*dest++ = RiceCoderFlag::None;
 		len = initialCompressedLen;
 		memcpy(dest+4, tmp, len);
-	}else if (compressedLen < bytesLen && compressedLen < repeationCompressedLen) {
+	}else if (compressedLen < riceCodedLen && compressedLen < repeationCompressedLen) {
 		*dest++ = 1;
 		*dest++ = b;
 		len = compressedLen;
-	}else if (bytesLen < repeationCompressedLen) {
+	}else if (riceCodedLen < repeationCompressedLen) {
 		*dest++ = 0;
 		*dest++ = b;
-		len = bytesLen;
+		len = riceCodedLen;
 		memcpy(dest+4, tmp2, len);
 	}else {
 		*dest++ = 2;
@@ -468,10 +421,18 @@ size_t compressSub(
 	dest += len;
 	
 	size_t destDiff = dest - initialDest;
-	printf(
-		"[%d %d %d %d %d] %d %d %d\n",
-		hists[0], hists[1], hists[2], hists[3], hists[4],
-		max, b, destDiff);
+
+	cinfo.srcCount = srcCount;
+	cinfo.signFlagsLen = signFlagsLen;
+	cinfo.mini = mini;
+	cinfo.maxi = maxi;
+	cinfo.max = max;
+	cinfo.riceCoderParam = b;
+	cinfo.initialCompressedLen = initialCompressedLen;
+	cinfo.riceCodedLen = riceCodedLen;
+	cinfo.compressedLen = compressedLen;
+	cinfo.repeationCompressedLen = repeationCompressedLen;
+	cinfo.totalLen = destDiff;
 	
 	return destDiff;
 }
@@ -482,6 +443,7 @@ size_t compress(
 	size_t vBlockCount,
 	const unsigned char* pZeroOneInfos,
 	size_t zeroOneLimit,
+	CompressInfo compressInfos[8],
 	int* src,
 	unsigned char* tmp1,
 	unsigned char* tmp2,
@@ -534,7 +496,7 @@ size_t compress(
 	}
 	
 	to -= totalBlockCount;
-	progress += compressSub(compressor, to, 0, totalBlockCount, 1, dest+progress, destLen-progress, tmp1, tmp2);
+	progress += compressSub(compressor, to, 0, totalBlockCount, 1, dest+progress, destLen-progress, tmp1, tmp2, compressInfos[0]);
 	from += totalBlockCount;
 	
 	// zero one flags
@@ -548,7 +510,7 @@ size_t compress(
 	for (size_t i=1; i<8; ++i) {
 		const unsigned char* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
 		size_t blockSize = 1 + i * 2;
-		progress += compressSub(compressor, from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2);
+		progress += compressSub(compressor, from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, compressInfos[i]);
 		from += totalBlockCount * blockSize;
 	}
 		
