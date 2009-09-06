@@ -92,7 +92,11 @@ int _tmain(int argc, _TCHAR* argv[])
 		reorderByFrequency(hBlockCount, vBlockCount, pWork, pWork2);
 		
 		// TODO: to add option to disable paeth prediction
-		paethPredictEncode(hBlockCount, vBlockCount, pWork2, pWork);
+		unsigned char enablePaethPrediction = 1;
+		*dest++ = enablePaethPrediction;
+		if (enablePaethPrediction) {
+			paethPredictEncode(hBlockCount, vBlockCount, pWork2, pWork);
+		}
 		
 		std::vector<unsigned char> signFlags(totalBlockCount*64);
 		unsigned char* pSignFlags = &signFlags[0];
@@ -147,6 +151,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		int* pWork2 = &work2[0];
 		size_t destLen = work2.size();
 		
+		unsigned char enablePaethPrediction = *src++;
+		
 		// zero one flags
 		unsigned char zeroOneLimit = *src++;
 		std::vector<unsigned char> zeroOneFlags(totalBlockCount);
@@ -186,7 +192,9 @@ int _tmain(int argc, _TCHAR* argv[])
 			}
 		}
 		
-		paethPredictDecode(hBlockCount, vBlockCount, pWork2, pWork);
+		if (enablePaethPrediction) {
+			paethPredictDecode(hBlockCount, vBlockCount, pWork2, pWork);
+		}
 		
 		reorderByPosition(hBlockCount, vBlockCount, pWork2, pWork);
 		
