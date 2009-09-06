@@ -249,7 +249,7 @@ struct CompressInfo
 	unsigned char riceCoderParam;
 	
 	size_t srcCount;
-	size_t signFlagsLen;
+	size_t signFlagsCount;
 	size_t initialCompressedLen;
 	size_t riceCodedLen;
 	size_t compressedLen;
@@ -488,7 +488,7 @@ size_t collectInfos(
 	for (size_t i=0; i<8; ++i) {
 		size_t blockSize = 1 + i * 2;
 		CompressInfo& ci = compressInfos[i];
-
+		int oldCount = count;
 		int mini = boost::integer_traits<int>::const_max;
 		int maxi = boost::integer_traits<int>::const_min;
 		
@@ -526,7 +526,7 @@ size_t collectInfos(
 		ci.mini = mini;
 		ci.maxi = maxi;
 		ci.max = std::max(maxi, std::abs(mini));
-		
+		ci.signFlagsCount = count - oldCount;
 		from += srcCount;
 	}
 	return count;

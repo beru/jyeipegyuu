@@ -67,9 +67,8 @@ int _tmain(int argc, _TCHAR* argv[])
 	CompressInfo compressInfos[8] = {0};
 	
 	Quantizer quantizer;
-	quantizer.init(6*8+0, 0, 0, false);
+	quantizer.init(6*8+0, 0, 0, true);
 	
-	size_t zeroOneLimit = 1;
 	size_t totalLen = 0;
 	
 	// TODO: to design stream byte formats and various JYEIPEGYUU stream classes and implement serialize methods.
@@ -99,20 +98,26 @@ int _tmain(int argc, _TCHAR* argv[])
 		unsigned char* pSignFlags = &signFlags[0];
 		size_t signFlagCount = collectInfos(pWork2, totalBlockCount, pSignFlags, compressInfos);
 		
+		size_t zeroOneLimit = 2;
 		std::vector<unsigned char> zeroOneInfos(totalBlockCount);
 		unsigned char* pZeroOneInfos = &zeroOneInfos[0];
-		findZeroOneInfos(hBlockCount, vBlockCount, pWork2, &zeroOneInfos[0], zeroOneLimit);
 		
 		// TODO: to record quantizing zero one limit setting
 		
 		// quantizing zero one flags
-		BitWriter bw(dest+4);
-		for (size_t i=0; i<totalBlockCount; ++i) {
-			bw.putBit(pZeroOneInfos[i]);
+		*dest++ = zeroOneLimit;
+		if (zeroOneLimit != 0) {
+			findZeroOneInfos(hBlockCount, vBlockCount, pWork2, &zeroOneInfos[0], zeroOneLimit);
+			BitWriter bw(dest+4);
+			for (size_t i=0; i<totalBlockCount; ++i) {
+				bw.putBit(pZeroOneInfos[i]);
+			}
+			*((uint32_t*)dest) = bw.nBytes();
+			dest += 4;
+			dest += bw.nBytes();
+		}else {
+			pZeroOneInfos = 0;
 		}
-		*((uint32_t*)dest) = bw.nBytes();
-		dest += 4;
-		dest += bw.nBytes();
 		dest += compress(compressor, hBlockCount, vBlockCount, pZeroOneInfos, zeroOneLimit, compressInfos, pWork2, (unsigned char*)pWork, &work3[0], &work4[0], dest, encoded.size());
 		
 		// TODO: to record DCT coefficients sign predictor setting
@@ -143,19 +148,23 @@ int _tmain(int argc, _TCHAR* argv[])
 		size_t destLen = work2.size();
 		
 		// zero one flags
-		uint32_t zeroOneFlagBytes = *(uint32_t*)src;
-		src += 4;
+		unsigned char zeroOneLimit = *src++;
 		std::vector<unsigned char> zeroOneFlags(totalBlockCount);
 		unsigned char* pZeroOneFlags = &zeroOneFlags[0];
-		{
-			BitReader reader(src);
-			assert(totalBlockCount <= zeroOneFlagBytes*8);
-			for (size_t i=0; i<zeroOneFlagBytes*8; ++i) {
-				zeroOneFlags[i] = reader.getBit();
+		if (zeroOneLimit != 0) {
+			uint32_t zeroOneFlagBytes = *(uint32_t*)src;
+			src += 4;
+			{
+				BitReader reader(src);
+				assert(totalBlockCount <= zeroOneFlagBytes*8);
+				for (size_t i=0; i<zeroOneFlagBytes*8; ++i) {
+					zeroOneFlags[i] = reader.getBit();
+				}
 			}
+			src += zeroOneFlagBytes;
+		}else {
+			pZeroOneFlags = 0;
 		}
-		src += zeroOneFlagBytes;
-		
 		src += decompress(compressor, hBlockCount, vBlockCount, pZeroOneFlags, zeroOneLimit, src, compressedLen, &tmp[0], pWork, pWork2, destLen);
 		
 		// sign flags
