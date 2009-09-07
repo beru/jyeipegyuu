@@ -216,10 +216,6 @@
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}"
 			>
 			<File
-				RelativePath=".\bzlib.h"
-				>
-			</File>
-			<File
 				RelativePath=".\dct.h"
 				>
 			</File>
@@ -241,6 +237,14 @@
 			</File>
 			<File
 				RelativePath=".\Quantizer.h"
+				>
+			</File>
+			<File
+				RelativePath=".\RanCode.h"
+				>
+			</File>
+			<File
+				RelativePath=".\RanCodeAdp.h"
 				>
 			</File>
 			<File
@@ -279,22 +283,6 @@
 			</File>
 			<File
 				RelativePath=".\ReadImage\ReadImage.h"
-				>
-			</File>
-		</Filter>
-		<Filter
-			Name="Compressor"
-			>
-			<File
-				RelativePath=".\Compressor\BZip2Compressor.cpp"
-				>
-			</File>
-			<File
-				RelativePath=".\Compressor\BZip2Compressor.h"
-				>
-			</File>
-			<File
-				RelativePath=".\Compressor\ICompressor.h"
 				>
 			</File>
 		</Filter>
