@@ -437,6 +437,7 @@ void Decode(unsigned char* code, int code_size, int* result, int& result_size) {
 	while (cnt < result_size) {
 		operation_buffer = readBits(operation_buffer, base-shift, code);
 		ID = operation_buffer/product;
+		assert(0<=ID && ID<=Denominator);
 		operation_buffer -= product * cumulative[symbol[ID]];
 		product = SafeProduct(product, frequency[symbol[ID]], mask, shift);
 		result[cnt] = symbol[ID] + min_value - 1;

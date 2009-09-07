@@ -64,7 +64,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	CompressInfo compressInfos[8] = {0};
 	
 	Quantizer quantizer;
-	quantizer.init(6*8+0, 0, 0, true);
+	quantizer.init(6*8+0, 0, 0, false);
 	
 	size_t totalLen = 0;
 	
@@ -99,20 +99,19 @@ int _tmain(int argc, _TCHAR* argv[])
 		size_t signFlagCount = collectInfos(pWork2, totalBlockCount, pSignFlags, compressInfos);
 		
 		size_t zeroOneLimit = 2;
-		std::vector<unsigned char> zeroOneInfos(totalBlockCount);
-		unsigned char* pZeroOneInfos = &zeroOneInfos[0];
+		std::vector<int> zeroOneInfos(totalBlockCount);
+		int* pZeroOneInfos = &zeroOneInfos[0];
 		
 		// quantizing zero one flags
 		*dest++ = zeroOneLimit;
 		if (zeroOneLimit != 0) {
-			findZeroOneInfos(hBlockCount, vBlockCount, pWork2, &zeroOneInfos[0], zeroOneLimit);
-			BitWriter bw(dest+4);
-			for (size_t i=0; i<totalBlockCount; ++i) {
-				bw.putBit(pZeroOneInfos[i]);
-			}
-			*((uint32_t*)dest) = bw.nBytes();
+			findZeroOneInfos(hBlockCount, vBlockCount, pWork2, pZeroOneInfos, zeroOneLimit);
+			int encodedSize = totalBlockCount/4;
+			Encode(pZeroOneInfos, totalBlockCount, 1, 0, &work3[0], encodedSize);
+			*((uint32_t*)dest) = encodedSize;
 			dest += 4;
-			dest += bw.nBytes();
+			memcpy(dest, &work3[0], encodedSize); 
+			dest += encodedSize;
 		}else {
 			pZeroOneInfos = 0;
 		}
@@ -149,17 +148,15 @@ int _tmain(int argc, _TCHAR* argv[])
 		
 		// zero one flags
 		unsigned char zeroOneLimit = *src++;
-		std::vector<unsigned char> zeroOneFlags(totalBlockCount);
-		unsigned char* pZeroOneFlags = &zeroOneFlags[0];
+		std::vector<int> zeroOneFlags(totalBlockCount*2);
+		int* pZeroOneFlags = &zeroOneFlags[0];
 		if (zeroOneLimit != 0) {
 			uint32_t zeroOneFlagBytes = *(uint32_t*)src;
 			src += 4;
 			{
-				BitReader reader(src);
-				assert(totalBlockCount <= zeroOneFlagBytes*8);
-				for (size_t i=0; i<zeroOneFlagBytes*8; ++i) {
-					zeroOneFlags[i] = reader.getBit();
-				}
+				int flagCount = totalBlockCount;
+				Decode(src, zeroOneFlagBytes, pZeroOneFlags, flagCount);
+				assert(flagCount == totalBlockCount);
 			}
 			src += zeroOneFlagBytes;
 		}else {
