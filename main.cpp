@@ -13,7 +13,6 @@
 using namespace boost;
 #include <boost/cstdint.hpp>
 
-#include "Compressor/BZip2Compressor.h"
 #include "misc.h"
 #include "decode.h"
 #include "encode.h"
@@ -58,8 +57,6 @@ int _tmain(int argc, _TCHAR* argv[])
 	const size_t vBlockCount = height / 8 + ((height % 8) ? 1 : 0);
 	const size_t totalBlockCount = hBlockCount * vBlockCount;
 	
-	BZip2Compressor compressor;
-	
 	size_t storageSize = work.size()*4*1.1+600;
 	std::vector<unsigned char> work3(storageSize);
 	std::vector<unsigned char> work4(storageSize);
@@ -80,7 +77,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		
 		// TODO: to record stream signature "jyeipegyuu\0"
 		// TODO: to record streams
-
+		
 		int* pWork = &work[0];
 		int* pWork2 = &work2[0];
 		
@@ -91,7 +88,6 @@ int _tmain(int argc, _TCHAR* argv[])
 		
 		reorderByFrequency(hBlockCount, vBlockCount, pWork, pWork2);
 		
-		// TODO: to add option to disable paeth prediction
 		unsigned char enablePaethPrediction = 1;
 		*dest++ = enablePaethPrediction;
 		if (enablePaethPrediction) {
@@ -105,8 +101,6 @@ int _tmain(int argc, _TCHAR* argv[])
 		size_t zeroOneLimit = 2;
 		std::vector<unsigned char> zeroOneInfos(totalBlockCount);
 		unsigned char* pZeroOneInfos = &zeroOneInfos[0];
-		
-		// TODO: to record quantizing zero one limit setting
 		
 		// quantizing zero one flags
 		*dest++ = zeroOneLimit;
@@ -122,7 +116,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		}else {
 			pZeroOneInfos = 0;
 		}
-		dest += compress(compressor, hBlockCount, vBlockCount, pZeroOneInfos, zeroOneLimit, compressInfos, pWork2, (unsigned char*)pWork, &work3[0], &work4[0], dest, encoded.size());
+		dest += compress(hBlockCount, vBlockCount, pZeroOneInfos, zeroOneLimit, compressInfos, pWork2, (unsigned char*)pWork, &work3[0], &work4[0], dest, encoded.size());
 		
 		// TODO: to record DCT coefficients sign predictor setting
 		
@@ -171,7 +165,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		}else {
 			pZeroOneFlags = 0;
 		}
-		src += decompress(compressor, hBlockCount, vBlockCount, pZeroOneFlags, zeroOneLimit, src, compressedLen, &tmp[0], pWork, pWork2, destLen);
+		src += decompress(hBlockCount, vBlockCount, pZeroOneFlags, zeroOneLimit, src, compressedLen, &tmp[0], pWork, pWork2, destLen);
 		
 		// sign flags
 		uint32_t signFlagBytes = *(uint32_t*)src;

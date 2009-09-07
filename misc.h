@@ -1,4 +1,7 @@
 
+#include "RanCode.h"
+//#include "RanCodeAdp.h"
+
 template <typename T, typename T2>
 void gather(
 	const T* in, int lineOffsetBytes,
@@ -248,23 +251,26 @@ struct CompressInfo
 	int zeroRepeatHist[1024*4];
 	unsigned char riceCoderParam;
 	
+	size_t zeroOneOnlyAreaHist[2];
+	size_t nonZeroOneOnlyAreaHist[1024];
+
+	
 	size_t srcCount;
 	size_t signFlagsCount;
 	size_t initialCompressedLen;
 	size_t riceCodedLen;
-	size_t compressedLen;
 	size_t repeationCompressedLen;
 	size_t totalLen;
 };
 
 size_t compressSub(
-	ICompressor& compressor,
 	int* src,
 	const unsigned char* pZeroOneInfos,
 	size_t blockCount, size_t blockSize,
 	unsigned char* dest, size_t destLen,
 	unsigned char* tmp,
 	unsigned char* tmp2,
+	unsigned char* tmp3,
 	CompressInfo& cinfo
 	)
 {
@@ -281,6 +287,56 @@ size_t compressSub(
 	int* phists = cinfo.phists;
 	int* mhists = cinfo.mhists;
 	
+	int initialCompressedLen = srcCount * 4;
+	Encode(src, srcCount, max, 0, tmp, initialCompressedLen);
+		
+	int encodedValueSizes[2];
+	int* from = src;
+	if (pZeroOneInfos) {
+		std::vector<int> values;
+		for (size_t i=0; i<blockCount; ++i) {
+			if (pZeroOneInfos[i]) {
+				for (size_t j=0; j<blockSize; ++j) {
+					int val = src[i*blockSize+j];
+					cinfo.zeroOneOnlyAreaHist[val]++;
+					values.push_back(val);
+				}
+			}
+		}
+		encodedValueSizes[0] = blockCount*blockSize;
+		Encode(&values[0], values.size(), 1, 0, tmp2, encodedValueSizes[0]);
+
+		values.clear();		
+		int maxV = 0;
+		for (size_t i=0; i<blockCount; ++i) {
+			if (!pZeroOneInfos[i]) {
+				for (size_t j=0; j<blockSize; ++j) {
+					int val = src[i*blockSize+j];
+					maxV = std::max(maxV, val);
+					cinfo.nonZeroOneOnlyAreaHist[val]++;
+					values.push_back(val);	
+				}
+			}
+		}
+		encodedValueSizes[1] = blockCount*blockSize;
+		Encode(&values[0], values.size(), maxV, 0, tmp3, encodedValueSizes[1]);
+		
+		int totalSize = encodedValueSizes[0] + encodedValueSizes[1];
+		size_t len = 0;
+		if (totalSize <= initialCompressedLen) {
+			*dest++ = 3;
+			
+			for (size_t i=0; i<2; ++i) {
+				*((size_t*)dest) = encodedValueSizes[i];
+				dest += 4;
+				memcpy(dest, ((i==0)?tmp2:tmp3), encodedValueSizes[i]);
+				dest += encodedValueSizes[i];
+			}
+			
+			goto label_end;
+		}
+
+	}
 	int b = 0;
 	
 	if (max > 2048) {
@@ -301,49 +357,22 @@ size_t compressSub(
 		b = 0;
 	}
 	
-	size_t initialCompressedLen = compressor.Compress((const unsigned char*)src, srcCount*4, tmp, -1);
-	
-	BitWriter bitWriter(tmp2);
 	RiceCoder riceCoder(b);
-	
-	int* from = src;
-	if (pZeroOneInfos) {
-		for (size_t i=0; i<blockCount; ++i) {
-			if (pZeroOneInfos[i]) {
-				for (size_t j=0; j<blockSize; ++j) {
-					bitWriter.putBit(src[i*blockSize+j] == 0);	
-				}
-			}
+	BitWriter bitWriter(tmp2);
+	for (size_t i=0; i<blockCount; ++i) {
+		for (size_t j=0; j<blockSize; ++j) {
+			riceCoder.Encode(*from++, bitWriter);	
 		}
-		for (size_t i=0; i<blockCount; ++i) {
-			if (!pZeroOneInfos[i]) {
-				for (size_t j=0; j<blockSize; ++j) {
-					riceCoder.Encode(src[i*blockSize+j], bitWriter);	
-				}
-			}
-		}
-	}else {
-		for (size_t i=0; i<blockCount; ++i) {
-			for (size_t j=0; j<blockSize; ++j) {
-				riceCoder.Encode(*from++, bitWriter);	
-			}
-		}	
 	}
 	size_t riceCodedLen = bitWriter.nBytes();
-	size_t compressedLen = compressedLen = compressor.Compress(tmp2, riceCodedLen, dest+6, -1);
-	unsigned char* dest2 = (compressedLen < initialCompressedLen) ? tmp : (dest+6);
-	size_t repeationCompressedLen = repeationCompress(tmp2, riceCodedLen, dest2);
+	size_t repeationCompressedLen = repeationCompress(tmp2, riceCodedLen, dest+6);
 	
 	size_t len = 0;
-	if (initialCompressedLen < compressedLen && initialCompressedLen < riceCodedLen && initialCompressedLen < repeationCompressedLen) {
+	if (initialCompressedLen < riceCodedLen && initialCompressedLen < repeationCompressedLen) {
 		*dest++ = 1;
 		*dest++ = RiceCoderFlag::None;
 		len = initialCompressedLen;
 		memcpy(dest+4, tmp, len);
-	}else if (compressedLen < riceCodedLen && compressedLen < repeationCompressedLen) {
-		*dest++ = 1;
-		*dest++ = b;
-		len = compressedLen;
 	}else if (riceCodedLen < repeationCompressedLen) {
 		*dest++ = 0;
 		*dest++ = b;
@@ -353,23 +382,23 @@ size_t compressSub(
 		*dest++ = 2;
 		*dest++ = b;
 		len = repeationCompressedLen;
-		memcpy(dest+4, dest2, len);
 	}
 	*((size_t*)dest) = len;
 	dest += 4;
 	dest += len;
 	
+	cinfo.riceCoderParam = b;
+	cinfo.riceCodedLen = riceCodedLen;
+	cinfo.repeationCompressedLen = repeationCompressedLen;
+
+label_end:	
 	size_t destDiff = dest - initialDest;
 	
 	cinfo.srcCount = srcCount;
 	cinfo.mini = mini;
 	cinfo.maxi = maxi;
 	cinfo.max = max;
-	cinfo.riceCoderParam = b;
 	cinfo.initialCompressedLen = initialCompressedLen;
-	cinfo.riceCodedLen = riceCodedLen;
-	cinfo.compressedLen = compressedLen;
-	cinfo.repeationCompressedLen = repeationCompressedLen;
 	cinfo.totalLen = destDiff;
 	
 	return destDiff;
@@ -533,7 +562,6 @@ size_t collectInfos(
 }
 
 size_t compress(
-	ICompressor& compressor,
 	size_t hBlockCount,
 	size_t vBlockCount,
 	const unsigned char* pZeroOneInfos,
@@ -554,7 +582,7 @@ size_t compress(
 	for (size_t i=0; i<8; ++i) {
 		const unsigned char* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
 		size_t blockSize = 1 + i * 2;
-		progress += compressSub(compressor, from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, compressInfos[i]);
+		progress += compressSub(from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, tmp3, compressInfos[i]);
 		from += totalBlockCount * blockSize;
 	}
 		
@@ -562,10 +590,10 @@ size_t compress(
 }
 
 size_t decompressSub(
-	ICompressor& compressor,
 	const unsigned char* src,
 	const unsigned char* pZeroOneInfos,
 	unsigned char* tmp,
+	int* tmp2,
 	int* dest,
 	size_t totalBlockCount,
 	size_t blockSize)
@@ -575,53 +603,74 @@ size_t decompressSub(
 	const unsigned char* initialSrc = src;
 	
 	unsigned char compressFlag = *src++;
-	unsigned char b = *src++;
-	size_t len = *(size_t*)src;
-	src += 4;
 	
-	size_t len2 = 0;
-	switch (compressFlag) {
-	case 0:
-		memcpy(tmp, src, len);
-		len2 = len;
-		break;
-	case 1:
-		len2 = compressor.Decompress(src, len, tmp, -1);
-		break;
-	case 2:
-		len2 = repeationDecompress(src, len, tmp);
-		break;
-	}
+	if (compressFlag != 3) {
+	
+		unsigned char b = *src++;
+		size_t len = *(size_t*)src;
+		src += 4;
 		
-	if (b == RiceCoderFlag::None) {
-		memcpy(dest, tmp, len2);
-	}else {
-		RiceCoder riceCoder(b);
-		BitReader bitReader(tmp);
-		if (pZeroOneInfos) {
-			for (size_t i=0; i<totalBlockCount; ++i) {
-				if (pZeroOneInfos[i]) {
-					for (size_t j=0; j<blockSize; ++j) {
-						dest[i*blockSize+j] = bitReader.getBit() ? 0 : 1;
-					}			
-				}
-			}
-			for (size_t i=0; i<totalBlockCount; ++i) {
-				if (!pZeroOneInfos[i]) {
-					for (size_t j=0; j<blockSize; ++j) {
-						dest[i*blockSize+j] = riceCoder.Decode(bitReader);
-					}			
-				}
-			}
+		int len2 = 0;
+		switch (compressFlag) {
+		case 0:
+			memcpy(tmp, src, len);
+			len2 = len;
+			break;
+		case 1:
+			len2 = destLen*4;
+			Decode((unsigned char*)src, len, (int*)tmp, len2);
+			break;
+		case 2:
+			len2 = repeationDecompress(src, len, tmp);
+			break;
+		}
+		src += len;
+			
+		if (b == RiceCoderFlag::None) {
+			memcpy(dest, tmp, len2*4);
 		}else {
+			RiceCoder riceCoder(b);
+			BitReader bitReader(tmp);
 			for (size_t i=0; i<destLen; ++i) {
 				dest[i] = riceCoder.Decode(bitReader);
 			}
 		}
-	}
-//	showMinus(dest, dest, destLen);
+	}else {
+		size_t sizes[2] = {0};
+		int resultSize = destLen * 4;
 		
-	return 6 + len;
+		sizes[0] = *(size_t*)src;
+		src += 4;
+		memcpy(tmp, src, sizes[0]);
+		src += sizes[0];
+		Decode(tmp, sizes[0], tmp2, resultSize);
+		
+		size_t count = 0;
+		for (size_t i=0; i<totalBlockCount; ++i) {
+			if (pZeroOneInfos[i]) {
+				for (size_t j=0; j<blockSize; ++j) {
+					dest[i*blockSize+j] = tmp2[count++];
+				}			
+			}
+		}
+		
+		sizes[1] = *(size_t*)src;
+		src += 4;
+		memcpy(tmp, src, sizes[1]);
+		src += sizes[1];
+		Decode(tmp, sizes[1], tmp2, resultSize);
+		
+		count = 0;
+		for (size_t i=0; i<totalBlockCount; ++i) {
+			if (!pZeroOneInfos[i]) {
+				for (size_t j=0; j<blockSize; ++j) {
+					dest[i*blockSize+j] = tmp2[count++];
+				}			
+			}
+		}			
+						
+	}	
+	return src - initialSrc;
 }
 
 void reorderByFrequency(
@@ -946,7 +995,6 @@ void reorderByPosition(
 }
 
 size_t decompress(
-	ICompressor& decompressor,
 	size_t hBlockCount,
 	size_t vBlockCount,
 	const unsigned char* pZeroOneInfos,
@@ -964,7 +1012,7 @@ size_t decompress(
 	for (size_t i=0; i<8; ++i) {
 		const unsigned char* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
 		size_t blockSize = 1 + i * 2;
-		from += decompressSub(decompressor, from, p01, tmp, to, totalBlockCount, blockSize);
+		from += decompressSub(from, p01, tmp, tmp2, to, totalBlockCount, blockSize);
 		to += totalBlockCount * blockSize;
 	}
 	
