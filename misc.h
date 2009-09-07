@@ -1,8 +1,8 @@
 
-template <typename T>
+template <typename T, typename T2>
 void gather(
 	const T* in, int lineOffsetBytes,
-	int values[8][8]
+	T2 values[8][8]
 	)
 {
 	const T* src = in;
@@ -14,10 +14,10 @@ void gather(
 	}
 }
 
-template <typename T>
+template <typename T, typename T2>
 void scatter(
 	T* out, int lineOffsetBytes,
-	int values[8][8]
+	T2 values[8][8]
 	)
 {
 	T* dest = out;
@@ -404,7 +404,7 @@ void paethPredictEncode(
 	for (size_t y=1; y<vBlockCount; ++y) {
 		cur = *to;
 		above = from[fromLineOffset];
-		*to = cur - paethPredictor(0, above, 0);
+		*to = cur - above;
 		left = cur;
 		upperLeft = above;
 		++to;
