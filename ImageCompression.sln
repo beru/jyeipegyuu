@@ -3,6 +3,8 @@ Microsoft Visual Studio Solution File, Format Version 10.00
 # Visual Studio 2008
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ImageCompression", "ImageCompression.vcproj", "{E5BE9AA9-9CD2-4F43-97F6-76299C2FF3C5}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DCT_labo", "DCT_labo\DCT_labo.vcproj", "{976BC14C-98F6-4B54-98F1-ACD7B4AB45A1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -13,6 +15,10 @@ Global
 		{E5BE9AA9-9CD2-4F43-97F6-76299C2FF3C5}.Debug|Win32.Build.0 = Debug|Win32
 		{E5BE9AA9-9CD2-4F43-97F6-76299C2FF3C5}.Release|Win32.ActiveCfg = Release|Win32
 		{E5BE9AA9-9CD2-4F43-97F6-76299C2FF3C5}.Release|Win32.Build.0 = Release|Win32
+		{976BC14C-98F6-4B54-98F1-ACD7B4AB45A1}.Debug|Win32.ActiveCfg = Debug|Win32
+		{976BC14C-98F6-4B54-98F1-ACD7B4AB45A1}.Debug|Win32.Build.0 = Debug|Win32
+		{976BC14C-98F6-4B54-98F1-ACD7B4AB45A1}.Release|Win32.ActiveCfg = Release|Win32
+		{976BC14C-98F6-4B54-98F1-ACD7B4AB45A1}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
