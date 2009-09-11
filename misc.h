@@ -47,6 +47,19 @@ int paethPredictor(int left, int above, int upperLeft)
 	}
 }
 
+int LOCO_IPredictor(int left, int above, int upperLeft)
+{
+	int minLeftAbove = std::min(left, above);
+	int maxLeftAbove = std::max(left, above);
+	if (upperLeft > maxLeftAbove) {
+		return minLeftAbove;
+	}else if (upperLeft < minLeftAbove) {
+		return maxLeftAbove;
+	}else {
+		return left + above - upperLeft;
+	}
+}
+
 class BitWriter
 {
 public:
@@ -110,11 +123,52 @@ private:
 	const unsigned char* initialSrc_;
 };
 
+class RiceCoder
+{
+public:
+	RiceCoder(size_t shift)
+		:
+		shift_(shift)
+	{
+	}
+	
+	void Encode(size_t value, BitWriter& writer)
+	{
+		size_t p = value >> shift_;
+		for (size_t i=0; i<p; ++i) {
+			writer.putBit(false);
+		}
+		writer.putBit(true);
+		int v = 1;
+		for (size_t i=0; i<shift_; ++i) {
+			writer.putBit(value & v);
+			v <<= 1;
+		}
+	}
+
+	size_t Decode(BitReader& reader)
+	{
+		size_t q = 0;
+		while (!reader.getBit()) ++q;
+		size_t ret = q << shift_;
+		for (size_t i=0; i<shift_; ++i) {
+			if (reader.getBit()) {
+				ret += 1 << i;
+			}
+		}
+		return ret;
+	}
+	
+private:
+	size_t shift_;
+};
+
 void findZeroOneInfos(
 	size_t hBlockCount,
 	size_t vBlockCount,
 	const int* src,
 	int* dst,
+	int* dst2,
 	size_t limit
 	)
 {
@@ -125,6 +179,7 @@ void findZeroOneInfos(
 	from += totalBlockCount;
 	
 	std::fill(dst, dst+totalBlockCount, 1);
+	std::fill(dst2, dst2+totalBlockCount*8, 0);
 	
 	for (size_t i=1; i<8; ++i) {
 		unsigned char blockSize = 1 + i*2;
@@ -132,17 +187,29 @@ void findZeroOneInfos(
 			from += blockSize * totalBlockCount;
 			continue;
 		}
+		int* arr = dst2 + totalBlockCount * i;
 		for (size_t j=0; j<totalBlockCount; ++j) {
 			for (size_t k=0; k<blockSize; ++k) {
 				int v = abs(from[k]);
 				if (v > 1) {
 					dst[j] = 0;
+					arr[j] = -1;
 					break;
 				}
 			}
 			from += blockSize;
 		}
+		int hoge = 0;
 	}
+	
+	for (size_t i=0; i<totalBlockCount; ++i) {
+		int sum = 0;
+		for (size_t j=1; j<8; ++j) {
+			sum |= std::abs(dst2[j*totalBlockCount + i]) << (j-limit);
+		}
+		dst2[i] = sum;
+	}
+	int hoge = 0;
 }
 
 struct CompressInfo
@@ -165,9 +232,12 @@ struct CompressInfo
 	size_t totalLen;
 };
 
+static const size_t DC_BLOCKCOUNT_BORDER = 8192;
+
 size_t compressSub(
 	int* src,
 	const int* pZeroOneInfos,
+	size_t zeroOneFlag,
 	size_t blockCount, size_t blockSize,
 	unsigned char* dest, size_t destLen,
 	unsigned char* tmp,
@@ -189,62 +259,158 @@ size_t compressSub(
 	int* phists = cinfo.phists;
 	int* mhists = cinfo.mhists;
 	
-	int initialCompressedLen = srcCount * 4;
-	Encode(src, srcCount, max, 0, tmp, initialCompressedLen);
-		
-	int encodedValueSizes[2];
-	int* from = src;
-	if (pZeroOneInfos) {
-		std::vector<int> values;
-		for (size_t i=0; i<blockCount; ++i) {
-			if (pZeroOneInfos[i]) {
-				for (size_t j=0; j<blockSize; ++j) {
-					int val = src[i*blockSize+j];
-					cinfo.zeroOneOnlyAreaHist[val]++;
-					values.push_back(val);
-				}
-			}
-		}
-		encodedValueSizes[0] = blockCount*blockSize;
-		Encode(&values[0], values.size(), 1, 0, tmp2, encodedValueSizes[0]);
-		
-		values.clear();		
-		int maxV = 0;
-		for (size_t i=0; i<blockCount; ++i) {
-			if (!pZeroOneInfos[i]) {
-				for (size_t j=0; j<blockSize; ++j) {
-					int val = src[i*blockSize+j];
-					maxV = std::max(maxV, val);
-					cinfo.nonZeroOneOnlyAreaHist[val]++;
-					values.push_back(val);	
-				}
-			}
-		}
-		encodedValueSizes[1] = blockCount*blockSize;
-		Encode(&values[0], values.size(), maxV, 0, tmp3, encodedValueSizes[1]);
-		
-		int totalSize = encodedValueSizes[0] + encodedValueSizes[1];
-		size_t len = 0;
-		if (totalSize <= initialCompressedLen) {
-			*dest++ = 3;
-			
-			for (size_t i=0; i<2; ++i) {
-				*((size_t*)dest) = encodedValueSizes[i];
-				dest += 4;
-				memcpy(dest, ((i==0)?tmp2:tmp3), encodedValueSizes[i]);
-				dest += encodedValueSizes[i];
-			}
-			
-			goto label_end;
-		}
-
-	}
-	*dest++ = 1;
-	memcpy(dest+4, tmp, initialCompressedLen);
-	*((size_t*)dest) = initialCompressedLen;
-	dest += 4;
-	dest += initialCompressedLen;
+	int initialCompressedLen = 0;
 	
+	// DC成分の記録数が少ない場合はRangeCoderではなくGolomb-Rice符号を使う
+	//（成分数が少ない場合にRangeCoderの方が圧縮率が低いのは、エントロピの記録に容量を食ってしまう為かも）
+	if (blockSize == 1 && blockCount < DC_BLOCKCOUNT_BORDER) {
+		int b = 0;
+		
+		if (max > 2048) {
+			b = 7;
+		}else if (max > 1024) {
+			b = 6;
+		}else if (max > 512) {
+			b = 5;
+		}else if (max > 256) {
+			b = 4;
+		}else if (max > 128+64) {
+			b = 3;
+		}else if (max > 96) {
+			b = 2;
+		}else if (max > 32) {
+			b = 1;
+		}else {
+			b = 0;
+		}
+		
+		BitWriter bitWriter(tmp);
+		RiceCoder riceCoder(b);
+		int* from = src;
+		for (size_t i=0; i<blockCount; ++i) {
+			for (size_t j=0; j<blockSize; ++j) {
+				riceCoder.Encode(*from++, bitWriter);	
+			}
+		}	
+		initialCompressedLen = bitWriter.nBytes();
+		
+		*dest++ = 0;
+		*dest++ = b;
+		memcpy(dest+4, tmp, initialCompressedLen);
+		*((size_t*)dest) = initialCompressedLen;
+		dest += 4;
+		dest += initialCompressedLen;
+		
+	}else {
+		initialCompressedLen = srcCount * 4;
+		Encode(src, srcCount, max, 0, tmp, initialCompressedLen);
+		
+		int encodedValueSizes[2];
+		int* from = src;
+		if (pZeroOneInfos) {
+			std::vector<int> values;
+			for (size_t i=0; i<blockCount; ++i) {
+	//			if (!(pZeroOneInfos[i] & zeroOneFlag)) {
+				if (pZeroOneInfos[i]) {
+					for (size_t j=0; j<blockSize; ++j) {
+						int val = src[i*blockSize+j];
+						assert(val < 2);
+						cinfo.zeroOneOnlyAreaHist[val]++;
+						values.push_back(val);
+					}
+				}
+			}
+			encodedValueSizes[0] = blockCount*blockSize;
+			Encode(&values[0], values.size(), 1, 0, tmp2, encodedValueSizes[0]);
+			
+			values.clear();
+			int maxV = 0;
+			for (size_t i=0; i<blockCount; ++i) {
+	//			if ((pZeroOneInfos[i] & zeroOneFlag)) {
+				if (!pZeroOneInfos[i]) {
+					for (size_t j=0; j<blockSize; ++j) {
+						int val = src[i*blockSize+j];
+						maxV = std::max(maxV, val);
+						cinfo.nonZeroOneOnlyAreaHist[val]++;
+						values.push_back(val);	
+					}
+				}
+			}
+			encodedValueSizes[1] = blockCount*blockSize;
+			Encode(&values[0], values.size(), maxV, 0, tmp3, encodedValueSizes[1]);
+	/*
+			{
+				int zeroRepeat = 0;
+				int zeroRepeatHist[1024] = {0};
+				int repeatMax = 0;
+				int val = 0;
+				int valMax = 0;
+				std::vector<int> zeroRepeatRecs;
+				std::vector<int> nonZeroRecs;
+				for (size_t i=0; i<values.size(); ++i) {
+					val = values[i];
+					if (val == 0) {
+						++zeroRepeat;
+					}else {
+						zeroRepeatRecs.push_back(zeroRepeat);
+						++zeroRepeatHist[zeroRepeat];
+						repeatMax = std::max(repeatMax, zeroRepeat);
+						zeroRepeat = 0;
+						nonZeroRecs.push_back(val);
+						valMax = std::max(valMax, val);
+					}
+				}
+				if (zeroRepeat) {
+					zeroRepeatRecs.push_back(zeroRepeat);
+					++zeroRepeatHist[zeroRepeat];
+					repeatMax = std::max(repeatMax, zeroRepeat);
+					zeroRepeat = 0;
+					nonZeroRecs.push_back(val);
+					valMax = std::max(valMax, val);
+				}
+				std::vector<int> newRecs;
+				int nonZeroRefPos = 0;
+				for (size_t i=0; i<zeroRepeatRecs.size(); ++i) {
+					int v = zeroRepeatRecs[i];
+					if (v) {
+						newRecs.push_back(v);
+					}
+					newRecs.push_back(repeatMax + nonZeroRecs[nonZeroRefPos++]);
+				}
+				int encodedSize1 = blockCount*blockSize;
+				int encodedSize2 = blockCount*blockSize;
+				std::vector<unsigned char> recbuff(encodedSize1);
+				Encode(&zeroRepeatRecs[0], zeroRepeatRecs.size(), repeatMax, 0, &recbuff[0], encodedSize1);
+				Encode(&nonZeroRecs[0], nonZeroRecs.size(), maxV, 1, &recbuff[0], encodedSize2);
+				int hoget = 0;
+			}
+	*/
+			
+			int totalSize = encodedValueSizes[0] + encodedValueSizes[1];
+			size_t len = 0;
+			if (totalSize <= initialCompressedLen) {
+				*dest++ = 3;
+				
+				for (size_t i=0; i<2; ++i) {
+					*((size_t*)dest) = encodedValueSizes[i];
+					dest += 4;
+					memcpy(dest, ((i==0)?tmp2:tmp3), encodedValueSizes[i]);
+					dest += encodedValueSizes[i];
+				}
+				
+				goto label_end;
+			}
+
+		}
+		
+		*dest++ = 1;
+		memcpy(dest+4, tmp, initialCompressedLen);
+		*((size_t*)dest) = initialCompressedLen;
+		dest += 4;
+		dest += initialCompressedLen;
+		
+	}
+		
 label_end:	
 	size_t destDiff = dest - initialDest;
 	
@@ -258,7 +424,7 @@ label_end:
 	return destDiff;
 }
 
-void paethPredictEncode(
+void predictEncode(
 	size_t hBlockCount,
 	size_t vBlockCount,
 	int* src,
@@ -295,7 +461,7 @@ void paethPredictEncode(
 		for (size_t x=1; x<hBlockCount; ++x) {
 			above = from[fromPos];
 			cur = *to;
-			*to = cur - paethPredictor(left, above, upperLeft);
+			*to = cur - LOCO_IPredictor(left, above, upperLeft);
 			++to;
 			left = cur;
 			upperLeft = above;
@@ -306,7 +472,7 @@ void paethPredictEncode(
 	std::copy(tmp, tmp+totalBlockCount, src);
 }
 
-void paethPredictDecode(
+void predictDecode(
 	size_t hBlockCount,
 	size_t vBlockCount,
 	int* src,
@@ -334,19 +500,19 @@ void paethPredictDecode(
 		++writePos;
 	}
 	int toLineOffset = hBlockCount;
-	int paeth = 0;
+	int diff = 0;
 	for (size_t y=1; y<vBlockCount; ++y) {
 		above = to[toLineOffset - hBlockCount];
-		paeth = to[toLineOffset];
-		cur = paeth + paethPredictor(0, above, 0);
+		diff = to[toLineOffset];
+		cur = diff + above;
 		to[toLineOffset] = cur;
 		writePos = toLineOffset + 1;
 		left = cur;
 		upperLeft = above;
 		for (size_t x=1; x<hBlockCount; ++x) {
 			above = to[writePos - hBlockCount];
-			paeth = to[writePos];
-			cur = paeth + paethPredictor(left, above, upperLeft);
+			diff = to[writePos];
+			cur = diff + LOCO_IPredictor(left, above, upperLeft);
 			to[writePos] = cur;
 			left = cur;
 			upperLeft = above;
@@ -436,7 +602,7 @@ size_t compress(
 	for (size_t i=0; i<8; ++i) {
 		const int* p01 = (i < zeroOneLimit) ? 0 : pZeroOneInfos;
 		size_t blockSize = 1 + i * 2;
-		progress += compressSub(from, p01, totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, tmp3, compressInfos[i]);
+		progress += compressSub(from, p01, 1<<(i-zeroOneLimit), totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, tmp3, compressInfos[i]);
 		from += totalBlockCount * blockSize;
 	}
 		
@@ -458,55 +624,72 @@ size_t decompressSub(
 	
 	unsigned char compressFlag = *src++;
 	
-	if (compressFlag != 3) {
+	if (blockSize == 1 && totalBlockCount < DC_BLOCKCOUNT_BORDER) {
+		unsigned char b = *src++;
+		
 		size_t len = *(size_t*)src;
 		src += 4;
 		
-		int len2 = 0;
-		switch (compressFlag) {
-		case 1:
-			len2 = destLen*4;
-			Decode((unsigned char*)src, len, (int*)dest, len2);
-			break;
-		default:
-			assert(false);
+		RiceCoder riceCoder(b);
+		BitReader bitReader(src);
+		for (size_t i=0; i<destLen; ++i) {
+			dest[i] = riceCoder.Decode(bitReader);
 		}
+		
+		assert(len == bitReader.nBytes());
 		src += len;
+
 	}else {
-		size_t sizes[2] = {0};
-		int resultSize = destLen * 4;
-		
-		sizes[0] = *(size_t*)src;
-		src += 4;
-		memcpy(tmp, src, sizes[0]);
-		src += sizes[0];
-		Decode(tmp, sizes[0], tmp2, resultSize);
-		
-		size_t count = 0;
-		for (size_t i=0; i<totalBlockCount; ++i) {
-			if (pZeroOneInfos[i]) {
-				for (size_t j=0; j<blockSize; ++j) {
-					dest[i*blockSize+j] = tmp2[count++];
-				}			
+		if (compressFlag != 3) {
+			size_t len = *(size_t*)src;
+			src += 4;
+			
+			int len2 = 0;
+			switch (compressFlag) {
+			case 1:
+				len2 = destLen*4;
+				Decode((unsigned char*)src, len, (int*)dest, len2);
+				break;
+			default:
+				assert(false);
 			}
+			src += len;
+		}else {
+			size_t sizes[2] = {0};
+			int resultSize = destLen * 4;
+			
+			sizes[0] = *(size_t*)src;
+			src += 4;
+			memcpy(tmp, src, sizes[0]);
+			src += sizes[0];
+			Decode(tmp, sizes[0], tmp2, resultSize);
+			
+			size_t count = 0;
+			for (size_t i=0; i<totalBlockCount; ++i) {
+				if (pZeroOneInfos[i]) {
+					for (size_t j=0; j<blockSize; ++j) {
+						dest[i*blockSize+j] = tmp2[count++];
+					}			
+				}
+			}
+			
+			sizes[1] = *(size_t*)src;
+			src += 4;
+			memcpy(tmp, src, sizes[1]);
+			src += sizes[1];
+			Decode(tmp, sizes[1], tmp2, resultSize);
+			
+			count = 0;
+			for (size_t i=0; i<totalBlockCount; ++i) {
+				if (!pZeroOneInfos[i]) {
+					for (size_t j=0; j<blockSize; ++j) {
+						dest[i*blockSize+j] = tmp2[count++];
+					}			
+				}
+			}			
+							
 		}
-		
-		sizes[1] = *(size_t*)src;
-		src += 4;
-		memcpy(tmp, src, sizes[1]);
-		src += sizes[1];
-		Decode(tmp, sizes[1], tmp2, resultSize);
-		
-		count = 0;
-		for (size_t i=0; i<totalBlockCount; ++i) {
-			if (!pZeroOneInfos[i]) {
-				for (size_t j=0; j<blockSize; ++j) {
-					dest[i*blockSize+j] = tmp2[count++];
-				}			
-			}
-		}			
-						
-	}	
+	}
 	return src - initialSrc;
 }
 

@@ -91,7 +91,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		unsigned char enablePaethPrediction = 1;
 		*dest++ = enablePaethPrediction;
 		if (enablePaethPrediction) {
-			paethPredictEncode(hBlockCount, vBlockCount, pWork2, pWork);
+			predictEncode(hBlockCount, vBlockCount, pWork2, pWork);
 		}
 		
 		std::vector<unsigned char> signFlags(totalBlockCount*64);
@@ -100,18 +100,28 @@ int _tmain(int argc, _TCHAR* argv[])
 		
 		size_t zeroOneLimit = 2;
 		std::vector<int> zeroOneInfos(totalBlockCount);
+		std::vector<int> allZeroOneInfos(totalBlockCount * 8);
 		int* pZeroOneInfos = &zeroOneInfos[0];
+		int* pAllZeroOneInfos = &allZeroOneInfos[0];
 		
 		// quantizing zero one flags
 		*dest++ = zeroOneLimit;
 		if (zeroOneLimit != 0) {
-			findZeroOneInfos(hBlockCount, vBlockCount, pWork2, pZeroOneInfos, zeroOneLimit);
+			findZeroOneInfos(hBlockCount, vBlockCount, pWork2, pZeroOneInfos, pAllZeroOneInfos, zeroOneLimit);
 			int encodedSize = totalBlockCount/4;
 			Encode(pZeroOneInfos, totalBlockCount, 1, 0, &work3[0], encodedSize);
 			*((uint32_t*)dest) = encodedSize;
 			dest += 4;
 			memcpy(dest, &work3[0], encodedSize); 
 			dest += encodedSize;
+			
+			//encodedSize = totalBlockCount;
+			//Encode(pAllZeroOneInfos, totalBlockCount, (256>>zeroOneLimit)-1, 0, &work3[0], encodedSize);
+			//*((uint32_t*)dest) = encodedSize;
+			//dest += 4;
+			//memcpy(dest, &work3[0], encodedSize); 
+			//dest += encodedSize;
+			
 		}else {
 			pZeroOneInfos = 0;
 		}
@@ -184,7 +194,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 		
 		if (enablePaethPrediction) {
-			paethPredictDecode(hBlockCount, vBlockCount, pWork2, pWork);
+			predictDecode(hBlockCount, vBlockCount, pWork2, pWork);
 		}
 		
 		reorderByPosition(hBlockCount, vBlockCount, pWork2, pWork);
