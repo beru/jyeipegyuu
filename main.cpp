@@ -88,9 +88,9 @@ int _tmain(int argc, _TCHAR* argv[])
 		
 		reorderByFrequency(hBlockCount, vBlockCount, pWork, pWork2);
 		
-		unsigned char enablePaethPrediction = 1;
-		*dest++ = enablePaethPrediction;
-		if (enablePaethPrediction) {
+		unsigned char enableDCPrediction = 1;
+		*dest++ = enableDCPrediction;
+		if (enableDCPrediction) {
 			predictEncode(hBlockCount, vBlockCount, pWork2, pWork);
 		}
 		
@@ -154,7 +154,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		int* pWork2 = &work2[0];
 		size_t destLen = work2.size();
 		
-		unsigned char enablePaethPrediction = *src++;
+		unsigned char enableDCPrediction = *src++;
 		
 		// zero one flags
 		unsigned char zeroOneLimit = *src++;
@@ -193,7 +193,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			}
 		}
 		
-		if (enablePaethPrediction) {
+		if (enableDCPrediction) {
 			predictDecode(hBlockCount, vBlockCount, pWork2, pWork);
 		}
 		

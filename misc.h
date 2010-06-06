@@ -432,8 +432,7 @@ void predictEncode(
 	)
 {
 	const int totalBlockCount = static_cast<int>(hBlockCount * vBlockCount);
-
-	// paeth prediction
+	
 	int* from = src;
 	int* to = tmp;
 	std::copy(from, from+totalBlockCount, to);
