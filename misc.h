@@ -49,8 +49,8 @@ int paethPredictor(int left, int above, int upperLeft)
 
 int LOCO_IPredictor(int left, int above, int upperLeft)
 {
-	int minLeftAbove = std::min(left, above);
-	int maxLeftAbove = std::max(left, above);
+	int minLeftAbove = std::min<int>(left, above);
+	int maxLeftAbove = std::max<int>(left, above);
 	if (upperLeft > maxLeftAbove) {
 		return minLeftAbove;
 	}else if (upperLeft < minLeftAbove) {
@@ -220,7 +220,7 @@ struct CompressInfo
 	int hists[1024];
 	int phists[1024];
 	int mhists[1024];
-	int zeroRepeatHist[1024*4];
+	int zeroRepeatHist[1024*128];
 	
 	size_t zeroOneOnlyAreaHist[2];
 	size_t nonZeroOneOnlyAreaHist[1024];
@@ -233,6 +233,13 @@ struct CompressInfo
 };
 
 static const size_t DC_BLOCKCOUNT_BORDER = 8192;
+
+#define COMBINE_ZERO_FLAGS 0	// 各周波数の01領域をまとめて圧縮するテスト。逆に圧縮率が落ちてしまう。。
+
+#if COMBINE_ZERO_FLAGS
+std::vector<size_t> zeroFlagCompressedSizes;
+std::vector<int> zeroFlagValues;
+#endif
 
 size_t compressSub(
 	int* src,
@@ -253,7 +260,7 @@ size_t compressSub(
 	
 	int mini = cinfo.mini;
 	int maxi = cinfo.maxi;
-	size_t max = std::max(maxi, std::abs(mini));
+	size_t max = std::max<int>(maxi, std::abs(mini));
 	
 	int* hists = cinfo.hists;
 	int* phists = cinfo.phists;
@@ -322,7 +329,10 @@ size_t compressSub(
 			}
 			encodedValueSizes[0] = blockCount*blockSize;
 			Encode(&values[0], values.size(), 1, 0, tmp2, encodedValueSizes[0]);
-			
+#if COMBINE_ZERO_FLAGS
+			zeroFlagValues.insert(zeroFlagValues.end(), values.begin(), values.end());
+			zeroFlagCompressedSizes.push_back(encodedValueSizes[0]);
+#endif			
 			values.clear();
 			int maxV = 0;
 			for (size_t i=0; i<blockCount; ++i) {
@@ -330,7 +340,7 @@ size_t compressSub(
 				if (!pZeroOneInfos[i]) {
 					for (size_t j=0; j<blockSize; ++j) {
 						int val = src[i*blockSize+j];
-						maxV = std::max(maxV, val);
+						maxV = std::max<int>(maxV, val);
 						cinfo.nonZeroOneOnlyAreaHist[val]++;
 						values.push_back(val);	
 					}
@@ -548,8 +558,8 @@ size_t collectInfos(
 		size_t srcCount = blockCount * blockSize;
 		for (size_t j=0; j<srcCount; ++j) {
 			int val = from[j];
-			mini = std::min(val, mini);
-			maxi = std::max(val, maxi);
+			mini = std::min<int>(val, mini);
+			maxi = std::max<int>(val, maxi);
 			if (val == 0) {
 				++zeroRepeat;
 			}else {
@@ -573,7 +583,7 @@ size_t collectInfos(
 		}
 		ci.mini = mini;
 		ci.maxi = maxi;
-		ci.max = std::max(maxi, std::abs(mini));
+		ci.max = std::max<int>(maxi, std::abs(mini));
 		ci.signFlagsCount = count - oldCount;
 		from += srcCount;
 	}
@@ -604,7 +614,13 @@ size_t compress(
 		progress += compressSub(from, p01, 1<<(i-zeroOneLimit), totalBlockCount, blockSize, dest+progress, destLen-progress, tmp1, tmp2, tmp3, compressInfos[i]);
 		from += totalBlockCount * blockSize;
 	}
-		
+	
+#if COMBINE_ZERO_FLAGS
+	std::vector<unsigned char> tmp(10000);
+	int compressedSize = tmp.size();
+	Encode(&zeroFlagValues[0], zeroFlagValues.size(), 1, 0, &tmp[0], compressedSize);
+#endif
+
 	return progress;
 }
 

@@ -60,8 +60,9 @@ void decode(
 		for (size_t x=0; x<hBlocks; ++x) {
 			
 			gather(srcLine, inLineOffsetBytes, values);
-			
+
 			quantizer.dequantize(values);
+
 			idct_8x8(values, tmps);
 			for (size_t i=0; i<8; ++i) {
 				for (size_t j=0; j<8; ++j) {

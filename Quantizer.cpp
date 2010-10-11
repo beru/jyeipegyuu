@@ -36,7 +36,7 @@ static const unsigned char QUANT8_INTRA_MATRIX[8][8] = {
 	27,	29,	31,	33,	36,	38,	40,	42,
 };
 
-namespace {
+namespace impl {
 
 int div(int n, int d)
 {
@@ -76,7 +76,7 @@ void Quantizer::init(size_t qp, size_t hBlockness, size_t vBlockness, bool useQu
 	if (useQuantMatrix) {
 		for (size_t i=0; i<8; ++i) {
 			for (size_t j=0; j<8; ++j) {
-				quant8_table[i*8+j] = div(quant8_table[i*8+j] << 4, QUANT8_INTRA_MATRIX[i][j]);
+				quant8_table[i*8+j] = impl::div(quant8_table[i*8+j] << 4, QUANT8_INTRA_MATRIX[i][j]);
 				dequant8_table[i*8+j] *= QUANT8_INTRA_MATRIX[i][j];
 			}
 		}

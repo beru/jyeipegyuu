@@ -18,6 +18,7 @@ size_t sumOfAbsolutes(const int values[8][8])
 	return ret;
 }
 
+// quantize blocks...
 template <typename T>
 void encode(
 	Quantizer& quantizer,
@@ -62,11 +63,11 @@ void encode(
 			predictor.average = sum / 8;
 			gather(srcLine, inLineOffsetBytes, values);
 			predictor.horizontal(values, tmps);
-			sum = sumOfAbsolutes(tmps);
-			predictor.horizontalUp(values, tmps);
-			sum = sumOfAbsolutes(tmps);
-			predictor.dc(values, tmps);
-			sum = sumOfAbsolutes(tmps);
+			//sum = sumOfAbsolutes(tmps);
+			//predictor.horizontalUp(values, tmps);
+			//sum = sumOfAbsolutes(tmps);
+			//predictor.dc(values, tmps);
+			//sum = sumOfAbsolutes(tmps);
 			dct_8x8(tmps, tmps2);
 			quantizer.quantize(tmps);
 			scatter(destLine, outLineOffsetBytes, tmps);
@@ -98,6 +99,7 @@ void encode(
 			gather(srcLine, inLineOffsetBytes, values);
 			dct_8x8(values, tmps);
 			quantizer.quantize(values);
+//values[0][0] = 100;
 			scatter(destLine, outLineOffsetBytes, values);
 			srcLine += 8; destLine += 8;
 		}
