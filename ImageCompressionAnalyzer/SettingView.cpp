@@ -15,6 +15,11 @@ CSettingView::~CSettingView()
 {
 }
 
+BOOL CSettingView::PreTranslateMessage(MSG* pMsg)
+{
+	return CWindow::IsDialogMessage(pMsg);
+}
+
 LRESULT CSettingView::OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
 	DoDataExchange();

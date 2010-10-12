@@ -29,6 +29,8 @@ public:
 	~CSettingView();
 	enum { IDD = IDD_SETTING };
 
+	BOOL PreTranslateMessage(MSG* pMsg);
+
     BEGIN_MSG_MAP(CSettingView)
 		MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
 		MSG_WM_COMMAND(OnCommand)
