@@ -28,6 +28,9 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
 	if(CFrameWindowImpl<CMainFrame>::PreTranslateMessage(pMsg))
 		return TRUE;
 
+	if (m_pSettingView->PreTranslateMessage(pMsg)) {
+		return TRUE;
+	}
 	return m_pImageView->PreTranslateMessage(pMsg);
 }
 
