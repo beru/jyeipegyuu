@@ -103,9 +103,8 @@ LRESULT CMainFrame::OnAppAbout(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCt
 #include <algorithm>
 #include <cmath>
 
-#include <boost/integer_traits.hpp>
-using namespace boost;
-#include "stdint.h"
+#include <limits>
+#include <stdint.h>
 
 #include "../dct.h"
 #include "../Quantizer.h"

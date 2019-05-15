@@ -1,5 +1,6 @@
 
 #include "RanCode.h"
+#include <limits>
 //#include "RanCodeAdp.h"
 
 template <typename T, typename T2>
@@ -547,8 +548,8 @@ size_t collectInfos(
 		size_t blockSize = 1 + i * 2;
 		CompressInfo& ci = compressInfos[i];
 		int oldCount = count;
-		int mini = boost::integer_traits<int>::const_max;
-		int maxi = boost::integer_traits<int>::const_min;
+		int mini = std::numeric_limits<int>::max();
+		int maxi = std::numeric_limits<int>::min();
 		
 		int* hists = ci.hists;
 		int* phists = ci.phists;

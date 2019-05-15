@@ -9,9 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include <boost/integer_traits.hpp>
-using namespace boost;
-#include <boost/cstdint.hpp>
+#include <stdint.h>
 
 #include "misc.h"
 #include "decode.h"
