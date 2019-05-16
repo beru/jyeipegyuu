@@ -1,0 +1,121 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{15ba191a-2cd3-4f14-bbff-2aec22157811}</UniqueIdentifier>
+      <Extensions>cpp;c;cxx;def;odl;idl;hpj;bat;asm</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{2eaab08e-7512-4964-829b-aeb03127472c}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx;hm;inl;inc</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{5430493a-2545-4ef8-a59a-4b1cc992b860}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;jpg;jpeg;jpe;manifest</Extensions>
+    </Filter>
+    <Filter Include="parent">
+      <UniqueIdentifier>{d318248d-abc8-4dfa-a663-95953a89e04f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="parent\ReadImage">
+      <UniqueIdentifier>{ee38a13e-98f4-4f91-8026-fdc0dab74b29}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ImageCompressionAnalyzer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageView.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MainFrm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SettingView.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Quantizer.cpp">
+      <Filter>parent</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ReadImage\File.cpp">
+      <Filter>parent\ReadImage</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ReadImage\ReadImage.cpp">
+      <Filter>parent\ReadImage</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="AboutDlg.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FastDelegate.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FastDelegateBind.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageView.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MainFrm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="setting.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SettingView.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="stdafx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\dct.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\decode.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\encode.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\misc.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Quantizer.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\RanCode.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\RanCodeAdp.h">
+      <Filter>parent</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ReadImage\File.h">
+      <Filter>parent\ReadImage</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ReadImage\IFile.h">
+      <Filter>parent\ReadImage</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ReadImage\ReadImage.h">
+      <Filter>parent\ReadImage</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="res\ImageCompressionAnalyzer.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="res\toolbar.bmp">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="ImageCompressionAnalyzer.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>

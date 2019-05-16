@@ -51,15 +51,19 @@ LRESULT CMainFrame::OnCreate(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/
 	AddSimpleReBarBand(hWndCmdBar);
 	AddSimpleReBarBand(hWndToolBar, NULL, TRUE);
 
-    // ステータスバーを作成
-    m_hWndStatusBar = m_wndStatusBar.Create(m_hWnd);
-    UIAddStatusBar(m_hWndStatusBar);
+  // ステータスバーを作成
+  m_hWndStatusBar = m_wndStatusBar.Create(m_hWnd);
+  UIAddStatusBar(m_hWndStatusBar);
 	
+  HDC hDC = ::GetDC(0);
+  auto dpiX = GetDeviceCaps(hDC, LOGPIXELSX);
+  auto dpiY = GetDeviceCaps(hDC, LOGPIXELSY);
+  ::ReleaseDC(0, hDC);
+
 	// ステータスバーにペインを設定
 	int nPanes[] = {ID_DEFAULT_PANE, 1};
 	m_wndStatusBar.SetPanes(nPanes, sizeof(nPanes)/sizeof(nPanes[0]));
-	m_wndStatusBar.SetPaneWidth(1, 200);
-	
+	m_wndStatusBar.SetPaneWidth(1, ::MulDiv(200, dpiX, 96));
 	
 	m_hWndClient = m_splitter.Create(m_hWnd, rcDefault, NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
 
@@ -73,7 +77,7 @@ LRESULT CMainFrame::OnCreate(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/
 
 	m_splitter.SetSplitterPanes(m_pane, *m_pImageView);
 	UpdateLayout();
-	m_splitter.SetSplitterPos(190);
+	m_splitter.SetSplitterPos(::MulDiv(190, dpiX, 96));
 	m_splitter.SetSplitterExtendedStyle(SPLIT_NONINTERACTIVE);
 
 	UIAddToolBar(hWndToolBar);
@@ -155,7 +159,7 @@ size_t encodeDecode(Setting s)
 	out.resize(size);
 	
 	const size_t hBlockCount = width / 8 + ((width % 8) ? 1 : 0);
-	const size_t vBlockCount = height / 8 + ((height % 8) ? 1 : 0);
+	const size_t vBlockCount = height / 8;// + ((height % 8) ? 1 : 0);
 	const size_t totalBlockCount = hBlockCount * vBlockCount;
 	
 	size_t storageSize = work.size()*4*1.1+600;

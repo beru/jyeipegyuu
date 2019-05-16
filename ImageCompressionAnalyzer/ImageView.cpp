@@ -30,8 +30,8 @@ void CImageView::SetupDIB()
 {
 	CWindow wnd(GetDesktopWindow());
 	HDC hDC = wnd.GetDC();
-	int width = GetDeviceCaps(hDC, HORZRES) + 10;
-	int height = GetDeviceCaps(hDC, VERTRES) + 10;
+	int width = GetDeviceCaps(hDC, HORZRES) + 16;
+	int height = GetDeviceCaps(hDC, VERTRES) + 16;
 	wnd.ReleaseDC(hDC);
 	
 	// TopDownŒ`Ž®
